@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Request, Response, Router } from "express";
 import { logger } from "../utils/logger";
 import bcrypt from "bcrypt";
 import { prisma } from "../utils/db";
@@ -6,6 +6,7 @@ import { z } from "zod";
 import speakeasy from "speakeasy";
 import QRCode from "qrcode";
 import crypto from "crypto";
+import type { Prisma } from "@prisma/client";
 import {
     requireAuth,
     requireAdmin,
@@ -14,9 +15,17 @@ import {
     verifyAuthToken,
 } from "../middleware/auth";
 import { encrypt, decrypt } from "../utils/encryption";
+import { APP_PASSWORD_SECRET_PREFIX } from "../utils/appPasswords";
 import { BRAND_NAME } from "../config/brand";
 import { timingSafeCompare } from "../utils/timingSafe";
 import { runDummyBcrypt } from "../utils/dummyCredential";
+import { config } from "../config";
+import {
+    buildOidcAuthorizationUrl,
+    exchangeOidcCallback,
+    getOidcProviderId,
+    OidcSessionState,
+} from "../services/oidcAuth";
 
 const router = Router();
 
@@ -82,9 +91,415 @@ const subsonicPasswordSchema = z.object({
     password: z.string().min(8).max(128),
 });
 
+const appPasswordSchema = z.object({
+    displayName: z.string().trim().min(1).max(64),
+});
+
+type LoginUser = {
+    id: string;
+    username: string;
+    role: string;
+    tokenVersion: number;
+};
+
 // Use shared encryption module for 2FA secrets
 const encrypt2FASecret = encrypt;
 const decrypt2FASecret = decrypt;
+
+function generateAppPasswordSecret(): string {
+    return `${APP_PASSWORD_SECRET_PREFIX}${crypto.randomBytes(32).toString("base64url")}`;
+}
+
+function normalizeReturnTo(value: unknown): string {
+    if (typeof value !== "string") {
+        return "/";
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("/") || trimmed.startsWith("//")) {
+        return "/";
+    }
+    return trimmed;
+}
+
+function buildAbsoluteRequestUrl(req: Request): string {
+    return `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+}
+
+function redirectWithTokens(res: Response, returnTo: string, user: LoginUser) {
+    const token = generateToken(user);
+    const refreshToken = generateRefreshToken({
+        id: user.id,
+        tokenVersion: user.tokenVersion,
+    });
+    const separator = returnTo.includes("?") ? "&" : "?";
+    const params = new URLSearchParams({ token, refreshToken });
+    return res.redirect(`${returnTo}${separator}${params.toString()}`);
+}
+
+function redirectLoginError(res: Response, message: string) {
+    return res.redirect(`/login?error=${encodeURIComponent(message)}`);
+}
+
+function getClaimString(
+    claims: Record<string, unknown>,
+    claimName: string
+): string | null {
+    const value = claimName
+        .split(".")
+        .reduce<unknown>((current, key) => {
+            if (!current || typeof current !== "object") {
+                return undefined;
+            }
+            return (current as Record<string, unknown>)[key];
+        }, claims);
+
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getClaimStrings(
+    claims: Record<string, unknown>,
+    claimName: string
+): string[] {
+    const value = claimName
+        .split(".")
+        .reduce<unknown>((current, key) => {
+            if (!current || typeof current !== "object") {
+                return undefined;
+            }
+            return (current as Record<string, unknown>)[key];
+        }, claims);
+
+    if (Array.isArray(value)) {
+        return value.filter((entry): entry is string => typeof entry === "string");
+    }
+
+    if (typeof value === "string" && value.trim()) {
+        return [value.trim()];
+    }
+
+    return [];
+}
+
+function isOidcAdmin(claims: Record<string, unknown>): boolean {
+    if (!config.oidc.adminGroup) {
+        return false;
+    }
+    return getClaimStrings(claims, config.oidc.groupsClaim).includes(
+        config.oidc.adminGroup
+    );
+}
+
+function usernameCandidateFromClaims(
+    claims: Record<string, unknown>,
+    subject: string,
+    email: string | null,
+    displayName: string | null
+): string {
+    const base =
+        email?.split("@")[0] ||
+        getClaimString(claims, "preferred_username") ||
+        displayName ||
+        subject;
+    const normalized = base
+        .toLowerCase()
+        .replace(/[^a-z0-9_]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 28);
+    return normalized.length >= 3 ? normalized : `oidc_${normalized || "user"}`;
+}
+
+async function resolveAvailableUsername(
+    tx: Prisma.TransactionClient,
+    claims: Record<string, unknown>,
+    subject: string,
+    email: string | null,
+    displayName: string | null
+): Promise<string> {
+    const base = usernameCandidateFromClaims(claims, subject, email, displayName);
+    for (let index = 0; index < 100; index++) {
+        const candidate =
+            index === 0 ? base : `${base.slice(0, 26)}_${index}`;
+        const existing = await tx.user.findUnique({
+            where: { username: candidate },
+            select: { id: true },
+        });
+        if (!existing) {
+            return candidate;
+        }
+    }
+    return `oidc_${crypto.randomBytes(6).toString("hex")}`;
+}
+
+async function createDefaultUserSettings(
+    tx: Prisma.TransactionClient,
+    userId: string
+) {
+    await tx.userSettings.create({
+        data: {
+            userId,
+            playbackQuality: "original",
+            wifiOnly: false,
+            offlineEnabled: false,
+            maxCacheSizeMb: 10240,
+        },
+    });
+}
+
+async function resolveOidcUser(
+    claims: Record<string, unknown>
+): Promise<LoginUser | null> {
+    const subject = getClaimString(claims, "sub");
+    if (!subject) {
+        throw new Error("OIDC subject is missing");
+    }
+
+    const provider = getOidcProviderId();
+    const claimedEmail = getClaimString(claims, config.oidc.emailClaim);
+    const verifiedEmail = claims.email_verified === true ? claimedEmail : null;
+    const displayName = getClaimString(claims, config.oidc.nameClaim);
+    const admin = isOidcAdmin(claims);
+
+    const linked = await prisma.externalIdentity.findUnique({
+        where: {
+            provider_providerSubject: {
+                provider,
+                providerSubject: subject,
+            },
+        },
+        include: {
+            user: {
+                select: {
+                    id: true,
+                    username: true,
+                    role: true,
+                    tokenVersion: true,
+                },
+            },
+        },
+    });
+
+    if (linked?.user) {
+        if (admin && linked.user.role !== "admin") {
+            return prisma.user.update({
+                where: { id: linked.user.id },
+                data: { role: "admin" },
+                select: {
+                    id: true,
+                    username: true,
+                    role: true,
+                    tokenVersion: true,
+                },
+            });
+        }
+        return linked.user;
+    }
+
+    if (verifiedEmail) {
+        const emailUser = await prisma.user.findUnique({
+            where: { email: verifiedEmail },
+            select: {
+                id: true,
+                username: true,
+                role: true,
+                tokenVersion: true,
+            },
+        });
+
+        if (emailUser) {
+            await prisma.externalIdentity.create({
+                data: {
+                    userId: emailUser.id,
+                    provider,
+                    providerSubject: subject,
+                    email: verifiedEmail,
+                    displayName,
+                },
+            });
+
+            if (admin && emailUser.role !== "admin") {
+                return prisma.user.update({
+                    where: { id: emailUser.id },
+                    data: { role: "admin" },
+                    select: {
+                        id: true,
+                        username: true,
+                        role: true,
+                        tokenVersion: true,
+                    },
+                });
+            }
+            return emailUser;
+        }
+    }
+
+    if (!config.oidc.autoProvision) {
+        return null;
+    }
+
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const username = await resolveAvailableUsername(
+            tx,
+            claims,
+            subject,
+            verifiedEmail,
+            displayName
+        );
+        const user = await tx.user.create({
+            data: {
+                username,
+                displayName,
+                email: verifiedEmail,
+                passwordHash: null,
+                role: admin ? "admin" : "user",
+                onboardingComplete: true,
+            },
+        });
+
+        await createDefaultUserSettings(tx, user.id);
+        await tx.externalIdentity.create({
+            data: {
+                userId: user.id,
+                provider,
+                providerSubject: subject,
+                email: verifiedEmail,
+                displayName,
+            },
+        });
+
+        return {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            tokenVersion: user.tokenVersion,
+        };
+    });
+}
+
+/**
+ * @openapi
+ * /auth/config:
+ *   get:
+ *     summary: Get public auth feature flags
+ *     description: Returns login-mode flags used by the web login UI.
+ *     tags: [Authentication]
+ *     responses:
+ *       200:
+ *         description: Auth feature flags
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 oidcEnabled:
+ *                   type: boolean
+ *                 localLoginEnabled:
+ *                   type: boolean
+ */
+router.get("/config", (_req, res) => {
+    res.json({
+        oidcEnabled: config.oidc.enabled,
+        localLoginEnabled: config.localLoginEnabled,
+    });
+});
+
+/**
+ * @openapi
+ * /auth/oidc/login:
+ *   get:
+ *     summary: Start OIDC login
+ *     description: Starts the OIDC Authorization Code flow with PKCE and redirects to the identity provider.
+ *     tags: [Authentication]
+ *     parameters:
+ *       - in: query
+ *         name: returnTo
+ *         schema:
+ *           type: string
+ *         description: Same-origin path to return to after login.
+ *     responses:
+ *       302:
+ *         description: Redirects to the OIDC provider authorization URL
+ *       404:
+ *         description: OIDC is not enabled
+ */
+router.get("/oidc/login", async (req, res) => {
+    if (!config.oidc.enabled) {
+        return res.status(404).json({ error: "OIDC is not enabled" });
+    }
+
+    try {
+        const authorization = await buildOidcAuthorizationUrl();
+        req.session.oidc = {
+            state: authorization.state,
+            nonce: authorization.nonce,
+            codeVerifier: authorization.codeVerifier,
+            returnTo: normalizeReturnTo(req.query.returnTo),
+        };
+        return res.redirect(authorization.redirectUrl);
+    } catch (error) {
+        logger.error("OIDC login start error:", error);
+        return redirectLoginError(res, "OIDC login failed");
+    }
+});
+
+/**
+ * @openapi
+ * /auth/oidc/callback:
+ *   get:
+ *     summary: Complete OIDC login
+ *     description: Validates the OIDC callback, links or provisions the user, and redirects with web tokens.
+ *     tags: [Authentication]
+ *     parameters:
+ *       - in: query
+ *         name: code
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: state
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       302:
+ *         description: Redirects to the web app with access and refresh tokens or a login error
+ *       400:
+ *         description: Invalid OIDC state
+ *       404:
+ *         description: OIDC is not enabled
+ */
+router.get("/oidc/callback", async (req, res) => {
+    if (!config.oidc.enabled) {
+        return res.status(404).json({ error: "OIDC is not enabled" });
+    }
+
+    const stored = req.session.oidc;
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    if (!stored || !state || state !== stored.state) {
+        delete req.session.oidc;
+        return res.status(400).json({ error: "Invalid OIDC state" });
+    }
+
+    const checks: OidcSessionState = { ...stored };
+    delete req.session.oidc;
+
+    try {
+        const result = await exchangeOidcCallback(
+            buildAbsoluteRequestUrl(req),
+            checks
+        );
+        const user = await resolveOidcUser(result.claims);
+        if (!user) {
+            return redirectLoginError(res, "OIDC account is not linked");
+        }
+
+        req.session.userId = user.id;
+        return redirectWithTokens(res, checks.returnTo, user);
+    } catch (error) {
+        logger.error("OIDC callback error:", error);
+        return redirectLoginError(res, "OIDC login failed");
+    }
+});
 
 /**
  * @openapi
@@ -124,6 +539,10 @@ const decrypt2FASecret = decrypt;
 // POST /auth/login
 router.post("/login", async (req, res) => {
     try {
+        if (!config.localLoginEnabled) {
+            return res.status(403).json({ error: "Local login is disabled" });
+        }
+
         logger.debug(`[AUTH] Login attempt for user: ${req.body?.username}`);
         const { username, password } = loginSchema.parse(req.body);
         const { token } = req.body; // 2FA token if provided
@@ -137,6 +556,12 @@ router.post("/login", async (req, res) => {
             // path, preventing username enumeration via timing side-channel.
             await runDummyBcrypt();
             logger.debug(`[AUTH] User not found: ${username}`);
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        if (!user.passwordHash) {
+            await runDummyBcrypt();
+            logger.debug(`[AUTH] User has no local password: ${username}`);
             return res.status(401).json({ error: "Invalid credentials" });
         }
 
@@ -437,6 +862,13 @@ router.post("/change-password", requireAuth, async (req, res) => {
 
         if (!user) {
             return res.status(404).json({ error: "User not found" });
+        }
+
+        if (!user.passwordHash) {
+            await runDummyBcrypt();
+            return res
+                .status(401)
+                .json({ error: "Current password is incorrect" });
         }
 
         const valid = await bcrypt.compare(currentPassword, user.passwordHash);
@@ -965,7 +1397,16 @@ router.get(
             });
 
             const now = new Date();
-            const codesWithStatus = codes.map((c) => {
+            const codesWithStatus = codes.map((c: {
+                id: string;
+                code: string;
+                maxUses: number;
+                useCount: number;
+                expiresAt: Date | null;
+                createdAt: Date;
+                revoked: boolean;
+                creator: { username: string };
+            }) => {
                 let status: string;
                 if (c.revoked) {
                     status = "revoked";
@@ -1428,6 +1869,11 @@ router.post("/2fa/disable", requireAuth, async (req, res) => {
             return res.status(404).json({ error: "User not found" });
         }
 
+        if (!user.passwordHash) {
+            await runDummyBcrypt();
+            return res.status(401).json({ error: "Invalid password" });
+        }
+
         // Verify password
         const validPassword = await bcrypt.compare(password, user.passwordHash);
         if (!validPassword) {
@@ -1499,6 +1945,174 @@ router.get("/2fa/status", requireAuth, async (req, res) => {
     } catch (error) {
         logger.error("2FA status error:", error);
         res.status(500).json({ error: "Failed to get 2FA status" });
+    }
+});
+
+/**
+ * @openapi
+ * /auth/app-passwords:
+ *   get:
+ *     summary: List OpenSubsonic app passwords
+ *     description: Lists app-password metadata for the authenticated user. Secrets are never returned.
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: App-password metadata
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 appPasswords:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       displayName:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ *                         format: date-time
+ *                       lastUsedAt:
+ *                         type: string
+ *                         format: date-time
+ *                         nullable: true
+ *                       revokedAt:
+ *                         type: string
+ *                         format: date-time
+ *                         nullable: true
+ */
+router.get("/app-passwords", requireAuth, async (req, res) => {
+    try {
+        const appPasswords = await prisma.appPassword.findMany({
+            where: { userId: req.user!.id },
+            select: {
+                id: true,
+                displayName: true,
+                createdAt: true,
+                lastUsedAt: true,
+                revokedAt: true,
+            },
+            orderBy: { createdAt: "desc" },
+        });
+
+        return res.json({ appPasswords });
+    } catch (error) {
+        logger.error("List app passwords error:", error);
+        return res.status(500).json({ error: "Failed to list app passwords" });
+    }
+});
+
+/**
+ * @openapi
+ * /auth/app-passwords:
+ *   post:
+ *     summary: Create an OpenSubsonic app password
+ *     description: Creates a hash-only app password and returns the generated secret once.
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - displayName
+ *             properties:
+ *               displayName:
+ *                 type: string
+ *                 minLength: 1
+ *                 maxLength: 64
+ *     responses:
+ *       201:
+ *         description: Created app password. The secret is shown once.
+ *       400:
+ *         description: Invalid display name
+ */
+router.post("/app-passwords", requireAuth, async (req, res) => {
+    try {
+        const { displayName } = appPasswordSchema.parse(req.body);
+        const secret = generateAppPasswordSecret();
+        const passwordHash = await bcrypt.hash(secret, 10);
+
+        const appPassword = await prisma.appPassword.create({
+            data: {
+                userId: req.user!.id,
+                displayName,
+                passwordHash,
+            },
+            select: {
+                id: true,
+                displayName: true,
+                createdAt: true,
+                lastUsedAt: true,
+                revokedAt: true,
+            },
+        });
+
+        return res.status(201).json({
+            appPassword: {
+                ...appPassword,
+                secret,
+            },
+        });
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({
+                error: "Display name must be between 1 and 64 characters",
+            });
+        }
+        logger.error("Create app password error:", error);
+        return res.status(500).json({ error: "Failed to create app password" });
+    }
+});
+
+/**
+ * @openapi
+ * /auth/app-passwords/{id}:
+ *   delete:
+ *     summary: Revoke an OpenSubsonic app password
+ *     description: Revokes one of the authenticated user's app passwords.
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: App password revoked
+ *       404:
+ *         description: App password not found
+ */
+router.delete("/app-passwords/:id", requireAuth, async (req, res) => {
+    try {
+        const revoked = await prisma.appPassword.updateMany({
+            where: {
+                id: req.params.id,
+                userId: req.user!.id,
+                revokedAt: null,
+            },
+            data: { revokedAt: new Date() },
+        });
+
+        if (revoked.count === 0) {
+            return res.status(404).json({ error: "App password not found" });
+        }
+
+        return res.json({ message: "App password revoked" });
+    } catch (error) {
+        logger.error("Revoke app password error:", error);
+        return res.status(500).json({ error: "Failed to revoke app password" });
     }
 });
 

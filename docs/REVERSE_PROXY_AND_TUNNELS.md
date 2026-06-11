@@ -48,6 +48,23 @@ For single-service deployments (all-in-one image, Helm `deploymentMode: aio`):
 
 - Route everything to the single soundspan service (`:3030`)
 
+## OIDC callback routing
+
+When OIDC is enabled, register the public callback URL with your identity provider:
+
+```text
+https://soundspan.example.com/api/auth/oidc/callback
+```
+
+The callback must reach the same backend session store that handled `/api/auth/oidc/login`, and every proxy layer must preserve:
+
+- Query string (`state`, `code`, and provider parameters)
+- `Host`
+- `X-Forwarded-Proto`
+- Cookies
+
+Default frontend-proxy mode is valid because `/api/*` requests are forwarded to backend. In direct path-split mode, route `/api/auth/oidc/login` and `/api/auth/oidc/callback` to backend with the rest of `/api/*`.
+
 ## NGINX example (Docker/Kubernetes edge)
 
 ```nginx

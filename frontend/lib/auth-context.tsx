@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { api } from "./api";
+import { consumeAuthRedirectTokensFromUrl } from "./auth-redirect";
 import { getQueryClient } from "@/lib/query-client";
 import { frontendLogger as sharedFrontendLogger } from "@/lib/logger";
 
@@ -54,17 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Check if user has valid session on mount ONLY
         const checkAuth = async () => {
             // Check for token in URL (from redirect after login)
-            if (typeof window !== "undefined") {
-                const urlParams = new URLSearchParams(window.location.search);
-                const tokenFromUrl = urlParams.get("token");
-                if (tokenFromUrl) {
-                    // Store the token from URL
-                    api.setToken(tokenFromUrl);
-                    // Clean up URL (remove token param)
-                    const cleanUrl = window.location.pathname;
-                    window.history.replaceState({}, "", cleanUrl);
-                }
-            }
+            consumeAuthRedirectTokensFromUrl();
 
             try {
                 const userData = await api.getCurrentUser();

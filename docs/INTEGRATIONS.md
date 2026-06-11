@@ -4,6 +4,38 @@ soundspan works standalone, but these integrations unlock additional discovery a
 
 For environment and secret setup, see [`CONFIGURATION_AND_SECURITY.md`](CONFIGURATION_AND_SECURITY.md).
 
+## OIDC / SSO
+
+soundspan can use one OIDC provider for web/PWA sign-in. OIDC users are normal soundspan users linked to an external provider subject; OpenSubsonic clients still authenticate with local passwords, app passwords, or legacy Subsonic credentials and do not need OIDC support.
+
+### Keycloak example
+
+1. Create or choose a realm, for example `music`.
+2. Create a confidential OpenID Connect client, for example `soundspan`.
+3. Set the valid redirect URI to your public callback URL:
+
+```text
+https://music.example.com/api/auth/oidc/callback
+```
+
+4. Enable the standard `openid`, `profile`, and `email` scopes.
+5. Add a groups or roles mapper if you want admin mapping. For a simple groups mapper, emit a `groups` claim that includes values such as `soundspan-admins`.
+6. Configure soundspan:
+
+```env
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://idp.example.com/realms/music
+OIDC_CLIENT_ID=soundspan
+OIDC_CLIENT_SECRET=replace-with-keycloak-client-secret
+OIDC_REDIRECT_URI=https://music.example.com/api/auth/oidc/callback
+OIDC_SCOPES=openid profile email
+OIDC_AUTO_PROVISION=true
+OIDC_ADMIN_GROUP=soundspan-admins
+OIDC_GROUPS_CLAIM=groups
+```
+
+If your Keycloak mapper emits roles in a nested claim, set `OIDC_GROUPS_CLAIM` to that path, for example `realm_access.roles`.
+
 ## Lidarr
 
 Connect soundspan to Lidarr to request/download new music and trigger imports.

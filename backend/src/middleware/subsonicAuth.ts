@@ -5,6 +5,7 @@ import { timingSafeCompare } from "../utils/timingSafe";
 import { runDummyBcrypt } from "../utils/dummyCredential";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { prisma } from "../utils/db";
+import { APP_PASSWORD_SECRET_PREFIX } from "../utils/appPasswords";
 import { decrypt, encrypt } from "../utils/encryption";
 import { findApiKeyRecord } from "../utils/apiKeyHash";
 import { logger } from "../utils/logger";
@@ -33,6 +34,42 @@ function decodeSubsonicPassword(input: string): string | null {
     } catch {
         return null;
     }
+}
+
+async function findMatchingAppPassword(
+    userId: string,
+    secret: string,
+): Promise<{ id: string } | null> {
+    // Generated app-password secrets always carry the prefix, so skip the
+    // bcrypt scan entirely for credentials that cannot be app passwords.
+    if (!secret.startsWith(APP_PASSWORD_SECRET_PREFIX)) {
+        return null;
+    }
+
+    const appPasswords = await prisma.appPassword.findMany({
+        where: { userId, revokedAt: null },
+        select: { id: true, passwordHash: true },
+    });
+
+    let matchedAppPassword: { id: string } | null = null;
+    for (const appPassword of appPasswords) {
+        if (await bcrypt.compare(secret, appPassword.passwordHash)) {
+            matchedAppPassword = matchedAppPassword || { id: appPassword.id };
+        }
+    }
+
+    return matchedAppPassword;
+}
+
+function touchAppPassword(appPasswordId: string): void {
+    prisma.appPassword
+        .update({
+            where: { id: appPasswordId },
+            data: { lastUsedAt: new Date() },
+        })
+        .catch((err: unknown) => {
+            logger.debug("Failed to update app password lastUsedAt", err);
+        });
 }
 
 /** Validates OpenSubsonic credentials and enriches request context for `/rest` handlers. */
@@ -154,7 +191,7 @@ export async function requireSubsonicAuth(
                 where: { id: apiKeyRecord.id },
                 data: { lastUsed: new Date() },
             })
-            .catch((err) => { logger.debug("Failed to update API key lastUsed (subsonic)", err); });
+            .catch((err: unknown) => { logger.debug("Failed to update API key lastUsed (subsonic)", err); });
 
         req.user = {
             id: apiKeyRecord.user.id,
@@ -194,7 +231,15 @@ export async function requireSubsonicAuth(
 
     let authenticated = false;
 
-    if (hasTokenAuth && user.subsonicPassword) {
+    if (hasTokenAuth) {
+        const appPassword = await findMatchingAppPassword(user.id, token);
+        if (appPassword) {
+            authenticated = true;
+            touchAppPassword(appPassword.id);
+        }
+    }
+
+    if (!authenticated && hasTokenAuth && user.subsonicPassword) {
         try {
             const subsonicSecret = decrypt(user.subsonicPassword);
             const expectedToken = createHash("md5")
@@ -223,25 +268,37 @@ export async function requireSubsonicAuth(
             return;
         }
 
-        const validPassword = await bcrypt.compare(
-            decodedPassword,
-            user.passwordHash,
-        );
-
-        if (validPassword) {
+        const appPassword = await findMatchingAppPassword(user.id, decodedPassword);
+        if (appPassword) {
             authenticated = true;
+            touchAppPassword(appPassword.id);
+        }
 
-            // Keep token auth working without separate credential management.
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { subsonicPassword: encrypt(decodedPassword) },
-            });
+        if (!authenticated && user.passwordHash) {
+            const validPassword = await bcrypt.compare(
+                decodedPassword,
+                user.passwordHash,
+            );
+
+            if (validPassword) {
+                authenticated = true;
+
+                // Keep token auth working without separate credential management.
+                await prisma.user.update({
+                    where: { id: user.id },
+                    data: { subsonicPassword: encrypt(decodedPassword) },
+                });
+            }
+        }
+
+        if (!authenticated && !user.passwordHash) {
+            await runDummyBcrypt();
         }
     }
 
     if (!authenticated) {
-        // If the auth path taken didn't involve bcrypt (token-only),
-        // run a dummy comparison to equalize timing with the password path.
+        // If the auth path taken didn't involve bcrypt, run a dummy comparison
+        // to equalize timing with the password path.
         if (!hasPasswordAuth) {
             await runDummyBcrypt();
         }

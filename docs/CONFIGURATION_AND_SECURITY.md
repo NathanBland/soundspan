@@ -94,6 +94,22 @@ Last.fm no longer ships with a bundled fallback application key. Provide `LASTFM
 - Session cookies use `httpOnly`, `sameSite=strict`, and `secure` in production
 - Encryption key validity is checked at startup
 
+### OIDC Web Login
+
+Set `OIDC_ENABLED=true` to show "Sign in with SSO" on the login page and enable the `/api/auth/oidc/login` authorization-code flow. soundspan validates state, nonce, PKCE, issuer, audience, and the ID token through the configured provider, then mints the same internal JWT and refresh tokens used by local login.
+
+OIDC identities are stored as external identities linked to normal soundspan users. Existing identities are matched by provider and subject first. Email auto-linking is allowed only when the provider reports `email_verified=true`. If `OIDC_AUTO_PROVISION=true`, first-time OIDC users are created without a local password by default.
+
+`LOCAL_LOGIN_ENABLED=false` disables the web/PWA username/password login route, but it does not disable app-password authentication for OpenSubsonic `/rest` clients. Existing local accounts and admin-created local users remain supported when local login is enabled.
+
+### OpenSubsonic App Passwords
+
+Users can create app-specific OpenSubsonic passwords from Account settings. App passwords are generated with high entropy, stored only as bcrypt hashes, shown once, and can be revoked without changing the user's web login credentials.
+
+App passwords work only for `/rest` compatibility authentication. They are never accepted by `/api/auth/login`.
+
+Because app passwords are hash-only, standard Subsonic `md5(secret + salt)` token mode cannot be derived from a stored plaintext secret. soundspan therefore accepts app passwords in password mode (`p`, including `enc:`) and as a direct `t` value for compatibility, while true MD5 token validation remains limited to the legacy encrypted `subsonicPassword` fallback.
+
 ## Streaming Credential Security
 
 - YouTube Music and TIDAL OAuth tokens are AES-encrypted before database storage

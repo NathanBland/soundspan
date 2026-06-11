@@ -15,14 +15,18 @@ This document defines the current `/rest` compatibility contract implemented in 
 
 - Split frontend/backend deployments: use the frontend base URL for clients (for example `http://host:3030` in deployment, `http://host:3031` in local dev). Frontend proxies `/rest` to backend.
 - Backend-direct deployments: clients may target backend directly (`http://host:3006`).
+- Recommended client credential: create an app password in Account settings and use your soundspan username plus that one-time password in the client.
 
 ## Supported Auth Modes
 
-- `u` + `p` (plain and `enc:` hex password forms)
-- `u` + `t` + `s` token mode (`t = md5(subsonicPassword + salt)`)
+- `u` + `p` (plain and `enc:` hex password forms) with local account passwords or active app passwords
+- `u` + `t` + `s` token mode with direct app-password `t` values
+- Legacy `u` + `t` + `s` token mode where `t = md5(subsonicPassword + salt)` for users with the encrypted legacy Subsonic password fallback configured
 - `apiKey` query auth (OpenSubsonic extension), with optional `u` username consistency check
 - Required protocol params: one auth mode, `v`, `c` (`u` required for password/token auth, optional for `apiKey`)
 - Response formats: JSON, XML, JSONP (`f` + optional `callback`)
+
+App passwords are hash-only and cannot be used for web/PWA login. They are shown once at creation, can be revoked from Account settings, and update `lastUsedAt` on successful `/rest` authentication. Generated secrets always start with the `ssp_ap_` prefix, and `/rest` auth only scans app-password hashes for credentials carrying that prefix. Standard Subsonic MD5 token derivation remains legacy-only because validating `md5(secret + salt)` for hash-only app passwords would require storing a reversible secret.
 
 ## Implemented Endpoint Surface
 
@@ -188,7 +192,7 @@ Promote a deferred gap to in-scope when at least one of these is true:
 - `getTopSongs` now deterministically falls back to case-insensitive artist-name lookup when ID-path lookup misses, including artist names containing hyphens.
 - `getSimilarSongs` uses artist-to-similar-artist graph data; `getSimilarSongs2` merges similar-artist tracks with genre and same-artist fallback sources to avoid empty responses when similarity metadata is sparse.
 - `getLyrics` currently resolves by best-match library track (artist/title query), then returns plain lyrics or synced lyrics flattened to plain text lines.
-- Auth middleware now supports `u/p`, `u/t/s`, and `apiKey`; bearer-token style OpenSubsonic auth variants remain unsupported.
+- Auth middleware now supports `u/p`, `u/t/s`, `apiKey`, and active app passwords for `/rest`; bearer-token style OpenSubsonic auth variants remain unsupported.
 - `getAlbumInfo2` `notes` currently use mapped library metadata (album title fallback) because soundspan does not maintain dedicated album notes fields.
 - Some optional query keys outside the validated client matrix may still be ignored.
 

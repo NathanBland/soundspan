@@ -35,6 +35,10 @@ jest.mock("../../utils/db", () => ({
             findUnique: jest.fn(),
             update: jest.fn(),
         },
+        appPassword: {
+            findMany: jest.fn(),
+            update: jest.fn(),
+        },
     },
 }));
 
@@ -82,6 +86,8 @@ describe("requireSubsonicAuth", () => {
     const mockUpdate = prisma.user.update as jest.Mock;
     const mockApiKeyFindUnique = prisma.apiKey.findUnique as jest.Mock;
     const mockApiKeyUpdate = prisma.apiKey.update as jest.Mock;
+    const mockAppPasswordFindMany = (prisma as any).appPassword.findMany as jest.Mock;
+    const mockAppPasswordUpdate = (prisma as any).appPassword.update as jest.Mock;
     const mockCompare = bcrypt.compare as jest.Mock;
     const mockDecrypt = decrypt as jest.Mock;
     const mockRunDummyBcrypt = runDummyBcrypt as jest.Mock;
@@ -90,6 +96,8 @@ describe("requireSubsonicAuth", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockAppPasswordFindMany.mockResolvedValue([]);
+        mockAppPasswordUpdate.mockResolvedValue({});
         next = jest.fn();
     });
 
@@ -204,6 +212,7 @@ describe("requireSubsonicAuth", () => {
 
         await requireSubsonicAuth(req, buildRes(), next);
 
+        expect(mockAppPasswordFindMany).not.toHaveBeenCalled();
         expect(mockCompare).toHaveBeenCalledWith("secret", "hash");
         expect(mockUpdate).toHaveBeenCalledWith({
             where: { id: "u1" },
@@ -285,6 +294,7 @@ describe("requireSubsonicAuth", () => {
 
         await requireSubsonicAuth(req, buildRes(), next);
 
+        expect(mockAppPasswordFindMany).not.toHaveBeenCalled();
         expect(mockDecrypt).toHaveBeenCalledWith("cipher");
         expect(mockCompare).not.toHaveBeenCalled();
         expect(mockUpdate).not.toHaveBeenCalled();
@@ -434,6 +444,176 @@ describe("requireSubsonicAuth", () => {
 
         expect(mockCompare).toHaveBeenCalledWith("secret", "hash");
         expect(next).toHaveBeenCalled();
+    });
+
+    it("authenticates password mode using an active app password before local password", async () => {
+        mockFindUnique.mockResolvedValue({
+            id: "u1",
+            username: "alice",
+            role: "user",
+            passwordHash: "local-hash",
+            subsonicPassword: null,
+        });
+        mockAppPasswordFindMany.mockResolvedValue([
+            {
+                id: "ap-1",
+                passwordHash: "app-hash",
+                revokedAt: null,
+            },
+            {
+                id: "ap-2",
+                passwordHash: "other-app-hash",
+                revokedAt: null,
+            },
+        ]);
+        mockCompare.mockImplementation(async (provided: string, hash: string) => {
+            return provided === "ssp_ap_client-secret" && hash === "app-hash";
+        });
+
+        const req = buildReq({
+            u: "alice",
+            v: "1.16.1",
+            c: "symfonium",
+            p: "ssp_ap_client-secret",
+        });
+
+        await requireSubsonicAuth(req, buildRes(), next);
+
+        expect(mockAppPasswordFindMany).toHaveBeenCalledWith({
+            where: { userId: "u1", revokedAt: null },
+            select: { id: true, passwordHash: true },
+        });
+        expect(mockCompare).toHaveBeenCalledWith("ssp_ap_client-secret", "app-hash");
+        expect(mockCompare).toHaveBeenCalledWith(
+            "ssp_ap_client-secret",
+            "other-app-hash"
+        );
+        expect(mockCompare).not.toHaveBeenCalledWith(
+            "ssp_ap_client-secret",
+            "local-hash"
+        );
+        expect(mockAppPasswordUpdate).toHaveBeenCalledWith({
+            where: { id: "ap-1" },
+            data: { lastUsedAt: expect.any(Date) },
+        });
+        expect(mockUpdate).not.toHaveBeenCalled();
+        expect((req as any).user).toEqual({
+            id: "u1",
+            username: "alice",
+            role: "user",
+        });
+        expect(next).toHaveBeenCalled();
+    });
+
+    it("authenticates direct token mode using an active app password hash", async () => {
+        mockFindUnique.mockResolvedValue({
+            id: "u1",
+            username: "alice",
+            role: "user",
+            passwordHash: null,
+            subsonicPassword: null,
+        });
+        mockAppPasswordFindMany.mockResolvedValue([
+            {
+                id: "ap-1",
+                passwordHash: "app-hash",
+                revokedAt: null,
+            },
+        ]);
+        mockCompare.mockImplementation(async (provided: string, hash: string) => {
+            return provided === "ssp_ap_direct" && hash === "app-hash";
+        });
+
+        const req = buildReq({
+            u: "alice",
+            v: "1.16.1",
+            c: "client",
+            t: "ssp_ap_direct",
+            s: "salt",
+        });
+
+        await requireSubsonicAuth(req, buildRes(), next);
+
+        expect(mockCompare).toHaveBeenCalledWith("ssp_ap_direct", "app-hash");
+        expect(mockDecrypt).not.toHaveBeenCalled();
+        expect(mockAppPasswordUpdate).toHaveBeenCalledWith({
+            where: { id: "ap-1" },
+            data: { lastUsedAt: expect.any(Date) },
+        });
+        expect(next).toHaveBeenCalled();
+    });
+
+    it("rejects revoked app passwords and safely handles users without local passwords", async () => {
+        mockFindUnique.mockResolvedValue({
+            id: "u1",
+            username: "alice",
+            role: "user",
+            passwordHash: null,
+            subsonicPassword: null,
+        });
+        mockAppPasswordFindMany.mockResolvedValue([]);
+
+        await requireSubsonicAuth(
+            buildReq({
+                u: "alice",
+                v: "1.16.1",
+                c: "client",
+                p: "ssp_ap_client-secret",
+            }),
+            buildRes(),
+            next,
+        );
+
+        expect(mockAppPasswordFindMany).toHaveBeenCalledWith({
+            where: { userId: "u1", revokedAt: null },
+            select: { id: true, passwordHash: true },
+        });
+        expect(mockCompare).not.toHaveBeenCalled();
+        expect(mockRunDummyBcrypt).toHaveBeenCalledTimes(1);
+        expect(mockSendError).toHaveBeenCalledWith(
+            expect.anything(),
+            40,
+            "Wrong username or password",
+            "json",
+            undefined,
+        );
+        expect(next).not.toHaveBeenCalled();
+    });
+
+    it("skips the app-password scan for credentials without the secret prefix", async () => {
+        mockFindUnique.mockResolvedValue({
+            id: "u1",
+            username: "alice",
+            role: "user",
+            passwordHash: "local-hash",
+            subsonicPassword: null,
+        });
+        mockCompare.mockResolvedValue(false);
+
+        await requireSubsonicAuth(
+            buildReq({
+                u: "alice",
+                v: "1.16.1",
+                c: "client",
+                p: "not-an-app-password",
+            }),
+            buildRes(),
+            next,
+        );
+
+        expect(mockAppPasswordFindMany).not.toHaveBeenCalled();
+        expect(mockCompare).toHaveBeenCalledWith(
+            "not-an-app-password",
+            "local-hash",
+        );
+        expect(mockSendError).toHaveBeenCalledWith(
+            expect.anything(),
+            40,
+            "Wrong username or password",
+            "json",
+            undefined,
+        );
+        expect(next).not.toHaveBeenCalled();
     });
 
     it("returns wrong credentials when password and token auth both fail", async () => {

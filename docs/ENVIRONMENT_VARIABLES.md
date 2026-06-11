@@ -87,6 +87,18 @@ Experimental feature note:
 | `DOCS_PUBLIC` | `backend` | Optional | `false` | Allows public API docs in production when `true`. |
 | `ADMIN_RESET_PASSWORD` | `backend` | Optional | unset | One-time startup password reset for admin account. |
 | `JWT_SECRET` | `backend` | Optional | falls back to `SESSION_SECRET` | Explicit JWT signing secret override. |
+| `LOCAL_LOGIN_ENABLED` | `backend` | Optional | `true` | Enables local username/password web login. Set `false` to require OIDC/SSO for web login while keeping `/rest` app-password auth available. |
+| `OIDC_ENABLED` | `backend` | Optional | `false` | Enables OIDC web/PWA login. When `true`, issuer URL, client ID, client secret, and redirect URI are required at startup. |
+| `OIDC_ISSUER_URL` | `backend` | Required when `OIDC_ENABLED=true` | unset | OIDC issuer URL used for discovery, for example a Keycloak realm URL. |
+| `OIDC_CLIENT_ID` | `backend` | Required when `OIDC_ENABLED=true` | unset | OIDC client ID registered with the identity provider. |
+| `OIDC_CLIENT_SECRET` | `backend` | Required when `OIDC_ENABLED=true` | unset | OIDC confidential client secret. |
+| `OIDC_REDIRECT_URI` | `backend` | Required when `OIDC_ENABLED=true` | unset | Public callback URL registered with the provider, ending in `/api/auth/oidc/callback`. |
+| `OIDC_SCOPES` | `backend` | Optional | `openid profile email` | Scopes requested during OIDC authorization. Must include `openid`. |
+| `OIDC_AUTO_PROVISION` | `backend` | Optional | `false` | Creates a normal soundspan user on first verified OIDC login when no linked account exists. |
+| `OIDC_ADMIN_GROUP` | `backend` | Optional | unset | Group name that grants admin role to new OIDC users and promotes existing linked users. Existing admins are not auto-demoted. |
+| `OIDC_GROUPS_CLAIM` | `backend` | Optional | `groups` | Claim path used for group membership, with dot notation supported for nested claims. |
+| `OIDC_EMAIL_CLAIM` | `backend` | Optional | `email` | Claim path used for account email. Existing users are auto-linked by email only when `email_verified=true`. |
+| `OIDC_NAME_CLAIM` | `backend` | Optional | `name` | Claim path used for display name metadata. |
 
 ## Distributed Runtime and Scheduler Controls
 

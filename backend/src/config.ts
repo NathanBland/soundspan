@@ -23,6 +23,37 @@ const envSchema = z.object({
     PORT: z.string().optional(),
     NODE_ENV: z.enum(["development", "production", "test"]).optional(),
     MUSIC_PATH: z.string().min(1, "MUSIC_PATH is required"),
+    LOCAL_LOGIN_ENABLED: z.string().optional(),
+    OIDC_ENABLED: z.string().optional(),
+    OIDC_ISSUER_URL: z.string().optional(),
+    OIDC_CLIENT_ID: z.string().optional(),
+    OIDC_CLIENT_SECRET: z.string().optional(),
+    OIDC_REDIRECT_URI: z.string().optional(),
+    OIDC_SCOPES: z.string().optional(),
+    OIDC_AUTO_PROVISION: z.string().optional(),
+    OIDC_ADMIN_GROUP: z.string().optional(),
+    OIDC_GROUPS_CLAIM: z.string().optional(),
+    OIDC_EMAIL_CLAIM: z.string().optional(),
+    OIDC_NAME_CLAIM: z.string().optional(),
+}).superRefine((env, ctx) => {
+    if (env.OIDC_ENABLED !== "true") {
+        return;
+    }
+
+    for (const key of [
+        "OIDC_ISSUER_URL",
+        "OIDC_CLIENT_ID",
+        "OIDC_CLIENT_SECRET",
+        "OIDC_REDIRECT_URI",
+    ] as const) {
+        if (!env[key]?.trim()) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [key],
+                message: `${key} is required when OIDC_ENABLED=true`,
+            });
+        }
+    }
 });
 
 try {
@@ -79,6 +110,21 @@ export const config = {
     databaseUrl: process.env.DATABASE_URL!,
     redisUrl: process.env.REDIS_URL!,
     sessionSecret: process.env.SESSION_SECRET!,
+    localLoginEnabled: process.env.LOCAL_LOGIN_ENABLED !== "false",
+
+    oidc: {
+        enabled: isEnvFlagEnabled(process.env.OIDC_ENABLED),
+        issuerUrl: process.env.OIDC_ISSUER_URL || "",
+        clientId: process.env.OIDC_CLIENT_ID || "",
+        clientSecret: process.env.OIDC_CLIENT_SECRET || "",
+        redirectUri: process.env.OIDC_REDIRECT_URI || "",
+        scopes: process.env.OIDC_SCOPES || "openid profile email",
+        autoProvision: isEnvFlagEnabled(process.env.OIDC_AUTO_PROVISION),
+        adminGroup: process.env.OIDC_ADMIN_GROUP || "",
+        groupsClaim: process.env.OIDC_GROUPS_CLAIM || "groups",
+        emailClaim: process.env.OIDC_EMAIL_CLAIM || "email",
+        nameClaim: process.env.OIDC_NAME_CLAIM || "name",
+    },
 
     // Session cookie `secure` flag. Defaults to true in production (cookies
     // should only travel over HTTPS); HTTP-only local-network deploys must set

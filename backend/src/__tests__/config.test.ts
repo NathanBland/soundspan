@@ -82,6 +82,18 @@ describe("config module", () => {
             AUDIOBOOKSHELF_URL: "http://audiobookshelf:13378",
             AUDIOBOOKSHELF_TOKEN: "abs-token",
             ALLOWED_ORIGINS: "https://app.example, http://localhost:5173 ",
+            LOCAL_LOGIN_ENABLED: "false",
+            OIDC_ENABLED: "true",
+            OIDC_ISSUER_URL: "https://idp.example/realms/soundspan",
+            OIDC_CLIENT_ID: "soundspan",
+            OIDC_CLIENT_SECRET: "oidc-secret",
+            OIDC_REDIRECT_URI: "https://music.example/api/auth/oidc/callback",
+            OIDC_SCOPES: "openid email",
+            OIDC_AUTO_PROVISION: "true",
+            OIDC_ADMIN_GROUP: "soundspan-admins",
+            OIDC_GROUPS_CLAIM: "realm_access.roles",
+            OIDC_EMAIL_CLAIM: "mail",
+            OIDC_NAME_CLAIM: "preferred_username",
         });
 
         expect(mockDotenvConfig).toHaveBeenCalledTimes(1);
@@ -116,6 +128,20 @@ describe("config module", () => {
             "https://app.example",
             "http://localhost:5173",
         ]);
+        expect(config.localLoginEnabled).toBe(false);
+        expect(config.oidc).toEqual({
+            enabled: true,
+            issuerUrl: "https://idp.example/realms/soundspan",
+            clientId: "soundspan",
+            clientSecret: "oidc-secret",
+            redirectUri: "https://music.example/api/auth/oidc/callback",
+            scopes: "openid email",
+            autoProvision: true,
+            adminGroup: "soundspan-admins",
+            groupsClaim: "realm_access.roles",
+            emailClaim: "mail",
+            nameClaim: "preferred_username",
+        });
     });
 
     it("uses allowedOrigins fallbacks for development and production", async () => {
@@ -131,6 +157,13 @@ describe("config module", () => {
         });
         expect(prodModule.config.allowedOrigins).toEqual([]);
         expect(prodModule.config.lastfm).toEqual({ apiKey: "" });
+        expect(prodModule.config.localLoginEnabled).toBe(true);
+        expect(prodModule.config.oidc.enabled).toBe(false);
+        expect(prodModule.config.oidc.scopes).toBe("openid profile email");
+        expect(prodModule.config.oidc.autoProvision).toBe(false);
+        expect(prodModule.config.oidc.groupsClaim).toBe("groups");
+        expect(prodModule.config.oidc.emailClaim).toBe("email");
+        expect(prodModule.config.oidc.nameClaim).toBe("name");
     });
 
     it("defaults secureCookies to true in production and false otherwise", async () => {
@@ -224,6 +257,34 @@ describe("config module", () => {
         expect(mockLoggerError).toHaveBeenCalledWith(
             "\n Please check your .env file and ensure all required variables are set."
         );
+
+        exitSpy.mockRestore();
+    });
+
+    it("requires complete OIDC configuration when OIDC is enabled", async () => {
+        const exitSpy = jest
+            .spyOn(process, "exit")
+            .mockImplementation(((code?: number) => {
+                throw new Error(`process.exit:${code}`);
+            }) as never);
+
+        await expect(
+            loadConfigModule({
+                OIDC_ENABLED: "true",
+                OIDC_ISSUER_URL: "https://idp.example/realms/soundspan",
+                OIDC_CLIENT_ID: "soundspan",
+                OIDC_CLIENT_SECRET: undefined,
+                OIDC_REDIRECT_URI: "https://music.example/api/auth/oidc/callback",
+            })
+        ).rejects.toThrow("process.exit:1");
+
+        expect(
+            mockLoggerError.mock.calls.some(
+                (call) =>
+                    typeof call[0] === "string" &&
+                    call[0].includes("OIDC_CLIENT_SECRET")
+            )
+        ).toBe(true);
 
         exitSpy.mockRestore();
     });

@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
+import { resolveAuthLoginMode } from "@/lib/auth-login-mode";
 import Image from "next/image";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
@@ -54,6 +55,10 @@ export default function LoginPage() {
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
+    const [authConfig, setAuthConfig] = useState({
+        oidcEnabled: false,
+        localLoginEnabled: true,
+    });
     const [artists, setArtists] = useState<Artist[]>([]);
     const [currentArtistIndex, setCurrentArtistIndex] = useState(0);
 
@@ -76,6 +81,19 @@ export default function LoginPage() {
         };
         checkOnboarding();
     }, [router]);
+
+    useEffect(() => {
+        const loadAuthConfig = async () => {
+            try {
+                const config = await api.getAuthConfig();
+                setAuthConfig(config);
+            } catch {
+                setAuthConfig({ oidcEnabled: false, localLoginEnabled: true });
+            }
+        };
+
+        loadAuthConfig();
+    }, []);
 
     // Fetch featured artists for background rotation
     useEffect(() => {
@@ -126,6 +144,10 @@ export default function LoginPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!authConfig.localLoginEnabled) {
+            setError("Local sign-in is disabled");
+            return;
+        }
         setError("");
         setIsLoading(true);
 
@@ -168,7 +190,12 @@ export default function LoginPage() {
         }
     };
 
+    const handleSsoLogin = () => {
+        window.location.assign("/api/auth/oidc/login");
+    };
+
     const currentArtist = artists[currentArtistIndex];
+    const loginMode = resolveAuthLoginMode(authConfig);
 
     // Show loading while checking if onboarding is needed
     if (isCheckingOnboarding) {
@@ -274,7 +301,28 @@ export default function LoginPage() {
                             Sign in to continue to {BRAND_NAME}
                         </p>
 
-                        <form onSubmit={handleSubmit} className="space-y-4">
+                        {loginMode.showSsoButton && (
+                            <button
+                                type="button"
+                                onClick={handleSsoLogin}
+                                className="w-full py-3 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition-all duration-200"
+                            >
+                                Sign in with SSO
+                            </button>
+                        )}
+
+                        {loginMode.showSeparator && (
+                            <div className="flex items-center gap-3 my-6">
+                                <div className="h-px flex-1 bg-white/10" />
+                                <span className="text-xs uppercase tracking-[0.2em] text-white/40">
+                                    or
+                                </span>
+                                <div className="h-px flex-1 bg-white/10" />
+                            </div>
+                        )}
+
+                        {loginMode.showLocalForm ? (
+                            <form onSubmit={handleSubmit} className="space-y-4">
                             {error && (
                                 <div className="bg-red-500/10  border border-red-500/30 rounded-lg p-4 text-sm text-red-400 animate-shake">
                                     {error}
@@ -448,7 +496,12 @@ export default function LoginPage() {
                                     ← Back to login
                                 </button>
                             )}
-                        </form>
+                            </form>
+                        ) : error ? (
+                            <div className="mt-4 bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400">
+                                {error}
+                            </div>
+                        ) : null}
 
                         <p className="text-center text-white/50 text-sm mt-6">
                             Have an invite code?{" "}

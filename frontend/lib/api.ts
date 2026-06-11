@@ -830,6 +830,16 @@ class ApiClient {
     }
 
     // Auth
+    async getAuthConfig(): Promise<{
+        oidcEnabled: boolean;
+        localLoginEnabled: boolean;
+    }> {
+        return this.request<{
+            oidcEnabled: boolean;
+            localLoginEnabled: boolean;
+        }>("/auth/config");
+    }
+
     async login(username: string, password: string, token?: string): Promise<{
         id: string;
         username: string;
@@ -974,6 +984,57 @@ class ApiClient {
 
     async clearSubsonicPassword(): Promise<{ success: boolean }> {
         return this.request<{ success: boolean }>("/auth/subsonic-password", {
+            method: "DELETE",
+        });
+    }
+
+    async listAppPasswords(): Promise<{
+        appPasswords: Array<{
+            id: string;
+            displayName: string;
+            createdAt: string;
+            lastUsedAt: string | null;
+            revokedAt: string | null;
+        }>;
+    }> {
+        return this.request<{
+            appPasswords: Array<{
+                id: string;
+                displayName: string;
+                createdAt: string;
+                lastUsedAt: string | null;
+                revokedAt: string | null;
+            }>;
+        }>("/auth/app-passwords");
+    }
+
+    async createAppPassword(displayName: string): Promise<{
+        appPassword: {
+            id: string;
+            displayName: string;
+            createdAt: string;
+            lastUsedAt: string | null;
+            revokedAt: string | null;
+            secret: string;
+        };
+    }> {
+        return this.request<{
+            appPassword: {
+                id: string;
+                displayName: string;
+                createdAt: string;
+                lastUsedAt: string | null;
+                revokedAt: string | null;
+                secret: string;
+            };
+        }>("/auth/app-passwords", {
+            method: "POST",
+            body: JSON.stringify({ displayName }),
+        });
+    }
+
+    async revokeAppPassword(id: string): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/auth/app-passwords/${id}`, {
             method: "DELETE",
         });
     }

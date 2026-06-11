@@ -14,6 +14,26 @@ const mockRequireAdmin = jest.fn((_req: any, _res: any, next: () => void) => nex
 const mockGenerateToken = jest.fn();
 const mockGenerateRefreshToken = jest.fn();
 const mockVerifyAuthToken = jest.fn();
+const mockConfig = {
+    localLoginEnabled: true,
+    oidc: {
+        enabled: false,
+        issuerUrl: "",
+        clientId: "",
+        clientSecret: "",
+        redirectUri: "",
+        scopes: "openid profile email",
+        autoProvision: false,
+        adminGroup: "",
+        groupsClaim: "groups",
+        emailClaim: "email",
+        nameClaim: "name",
+    },
+};
+
+jest.mock("../../config", () => ({
+    config: mockConfig,
+}));
 
 jest.mock("../../middleware/auth", () => ({
     requireAuth: mockRequireAuth,
@@ -26,6 +46,7 @@ jest.mock("../../middleware/auth", () => ({
 const prisma = {
     user: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
         findMany: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
@@ -33,6 +54,11 @@ const prisma = {
     },
     userSettings: {
         create: jest.fn(),
+    },
+    appPassword: {
+        findMany: jest.fn(),
+        create: jest.fn(),
+        updateMany: jest.fn(),
     },
 };
 
@@ -142,9 +168,15 @@ describe("auth routes runtime", () => {
     const getSubsonicPassword = getHandler("/subsonic-password", "get");
     const setSubsonicPassword = getHandler("/subsonic-password", "post");
     const deleteSubsonicPassword = getHandler("/subsonic-password", "delete");
+    const authConfig = getHandler("/config", "get");
+    const listAppPasswords = getHandler("/app-passwords", "get");
+    const createAppPassword = getHandler("/app-passwords", "post");
+    const revokeAppPassword = getHandler("/app-passwords/:id", "delete");
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockConfig.localLoginEnabled = true;
+        mockConfig.oidc.enabled = false;
 
         mockGenerateToken.mockReturnValue("jwt-access");
         mockGenerateRefreshToken.mockReturnValue("jwt-refresh");
@@ -164,6 +196,7 @@ describe("auth routes runtime", () => {
             subsonicPassword: null,
         });
         prisma.user.findMany.mockResolvedValue([]);
+        prisma.user.findFirst.mockResolvedValue(null);
         prisma.user.create.mockResolvedValue({
             id: "u-new",
             username: "new-user",
@@ -173,6 +206,15 @@ describe("auth routes runtime", () => {
         prisma.user.update.mockResolvedValue({});
         prisma.user.delete.mockResolvedValue({});
         prisma.userSettings.create.mockResolvedValue({});
+        prisma.appPassword.findMany.mockResolvedValue([]);
+        prisma.appPassword.create.mockResolvedValue({
+            id: "ap-1",
+            displayName: "Phone",
+            createdAt: new Date("2026-03-01T00:00:00.000Z"),
+            lastUsedAt: null,
+            revokedAt: null,
+        });
+        prisma.appPassword.updateMany.mockResolvedValue({ count: 1 });
 
         mockBcryptCompare.mockResolvedValue(true);
         mockBcryptHash.mockResolvedValue("new-hash");
@@ -217,6 +259,58 @@ describe("auth routes runtime", () => {
         const badPwRes = createRes();
         await login(badPwReq, badPwRes);
         expect(badPwRes.statusCode).toBe(401);
+    });
+
+    it("reports configured web login modes", async () => {
+        mockConfig.localLoginEnabled = false;
+        mockConfig.oidc.enabled = true;
+
+        const res = createRes();
+        await authConfig({} as any, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual({
+            oidcEnabled: true,
+            localLoginEnabled: false,
+        });
+    });
+
+    it("rejects local login when disabled by config", async () => {
+        mockConfig.localLoginEnabled = false;
+
+        const req = { body: { username: "alice", password: "pw" } } as any;
+        const res = createRes();
+        await login(req, res);
+
+        expect(res.statusCode).toBe(403);
+        expect(res.body).toEqual({ error: "Local login is disabled" });
+        expect(prisma.user.findUnique).not.toHaveBeenCalled();
+        expect(mockBcryptCompare).not.toHaveBeenCalled();
+    });
+
+    it("rejects local web login for users without a local password", async () => {
+        prisma.user.findUnique.mockResolvedValueOnce({
+            id: "u-oidc",
+            username: "oidc-user",
+            role: "user",
+            passwordHash: null,
+            tokenVersion: 1,
+            twoFactorEnabled: false,
+            twoFactorSecret: null,
+            twoFactorRecoveryCodes: null,
+        });
+
+        const req = { body: { username: "oidc-user", password: "pw" } } as any;
+        const res = createRes();
+        await login(req, res);
+
+        expect(res.statusCode).toBe(401);
+        expect(res.body).toEqual({ error: "Invalid credentials" });
+        expect(mockBcryptCompare).toHaveBeenCalledWith(
+            "dummy-password-never-matches",
+            expect.any(String)
+        );
+        expect(prisma.appPassword.findMany).not.toHaveBeenCalled();
     });
 
     it("supports 2FA challenge, TOTP verification, and recovery-code rejection on login", async () => {
@@ -1435,4 +1529,94 @@ describe("auth routes runtime", () => {
             })
         );
     });
+
+    it("lists app password metadata without secrets", async () => {
+        prisma.appPassword.findMany.mockResolvedValueOnce([
+            {
+                id: "ap-1",
+                displayName: "Phone",
+                createdAt: new Date("2026-03-01T00:00:00.000Z"),
+                lastUsedAt: null,
+                revokedAt: null,
+            },
+            {
+                id: "ap-2",
+                displayName: "Old client",
+                createdAt: new Date("2026-02-01T00:00:00.000Z"),
+                lastUsedAt: new Date("2026-02-02T00:00:00.000Z"),
+                revokedAt: new Date("2026-02-03T00:00:00.000Z"),
+            },
+        ]);
+
+        const req = { user: { id: "u1" } } as any;
+        const res = createRes();
+        await listAppPasswords(req, res);
+
+        expect(prisma.appPassword.findMany).toHaveBeenCalledWith({
+            where: { userId: "u1" },
+            select: {
+                id: true,
+                displayName: true,
+                createdAt: true,
+                lastUsedAt: true,
+                revokedAt: true,
+            },
+            orderBy: { createdAt: "desc" },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.body.appPasswords).toHaveLength(2);
+        expect(JSON.stringify(res.body)).not.toContain("passwordHash");
+        expect(JSON.stringify(res.body)).not.toContain("ssp_ap_");
     });
+
+    it("creates an app password and returns the generated secret once", async () => {
+        const req = {
+            user: { id: "u1" },
+            body: { displayName: "Phone" },
+        } as any;
+        const res = createRes();
+        await createAppPassword(req, res);
+
+        expect(mockBcryptHash).toHaveBeenCalledWith(
+            expect.stringMatching(/^ssp_ap_[A-Za-z0-9_-]+$/),
+            10
+        );
+        expect(prisma.appPassword.create).toHaveBeenCalledWith({
+            data: {
+                userId: "u1",
+                displayName: "Phone",
+                passwordHash: "new-hash",
+            },
+            select: {
+                id: true,
+                displayName: true,
+                createdAt: true,
+                lastUsedAt: true,
+                revokedAt: true,
+            },
+        });
+        expect(res.statusCode).toBe(201);
+        expect(res.body.appPassword.secret).toMatch(/^ssp_ap_/);
+    });
+
+    it("revokes app passwords by owner without deleting rows", async () => {
+        const req = {
+            user: { id: "u1" },
+            params: { id: "ap-1" },
+        } as any;
+        const res = createRes();
+        await revokeAppPassword(req, res);
+
+        expect(prisma.appPassword.updateMany).toHaveBeenCalledWith({
+            where: { id: "ap-1", userId: "u1", revokedAt: null },
+            data: { revokedAt: expect.any(Date) },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual({ message: "App password revoked" });
+
+        prisma.appPassword.updateMany.mockResolvedValueOnce({ count: 0 });
+        const missingRes = createRes();
+        await revokeAppPassword(req, missingRes);
+        expect(missingRes.statusCode).toBe(404);
+    });
+});
