@@ -483,11 +483,9 @@ router.get("/oidc/callback", async (req, res) => {
     const checks: OidcSessionState = { ...stored };
     delete req.session.oidc;
 
+    const callbackUrl = buildAbsoluteRequestUrl(req);
     try {
-        const result = await exchangeOidcCallback(
-            buildAbsoluteRequestUrl(req),
-            checks
-        );
+        const result = await exchangeOidcCallback(callbackUrl, checks);
         const user = await resolveOidcUser(result.claims);
         if (!user) {
             return redirectLoginError(res, "OIDC account is not linked");
@@ -496,7 +494,16 @@ router.get("/oidc/callback", async (req, res) => {
         req.session.userId = user.id;
         return redirectWithTokens(res, checks.returnTo, user);
     } catch (error) {
-        logger.error("OIDC callback error:", error);
+        const cause =
+            error instanceof Error &&
+            (error as Error & { cause?: unknown }).cause != null
+                ? (error as Error & { cause?: unknown }).cause
+                : undefined;
+        logger.error("OIDC callback error", {
+            message: error instanceof Error ? error.message : String(error),
+            cause,
+            callbackUrl,
+        });
         return redirectLoginError(res, "OIDC login failed");
     }
 });
