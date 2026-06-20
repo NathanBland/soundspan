@@ -473,15 +473,22 @@ services:
 
 volumes:
     # Music library — NFS-backed named volume shared across all services.
-    # Docker mounts this from the NFS server at container start; the NFS
-    # share must be reachable from the Docker host.
+    # NFS_MUSIC_ADDR and NFS_MUSIC_DEVICE must be set — no defaults.
+    #   NFS_MUSIC_ADDR   e.g. 192.168.1.3
+    #   NFS_MUSIC_DEVICE e.g. :/mnt/Prime-00/plexmedia/Music
     music-storage:
         driver_opts:
             type: "nfs"
-            o: "addr=192.168.1.3,nolock,soft,rw"
-            device: ":/mnt/Prime-00/plexmedia/Music"
-    # soundspan core
+            o: "addr=${NFS_MUSIC_ADDR},nolock,soft,rw"
+            device: "${NFS_MUSIC_DEVICE}"
+    # soundspan core — POSTGRES_DATA_PATH sets the host bind-mount path.
+    # Default: /opt/soundspan/postgres-data
     postgres_data:
+        driver: local
+        driver_opts:
+            type: none
+            o: bind
+            device: ${POSTGRES_DATA_PATH:-/opt/soundspan/postgres-data}
     backend_cache:
     backend_logs:
     # Streaming sidecars
