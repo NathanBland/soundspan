@@ -371,7 +371,10 @@ services:
     # ==============================================================================
 
     # Audio Analyzer - Extracts BPM, key, mood, and other audio features
+    # Requires AVX2 CPU support (Intel Haswell 2013+ / AMD Ryzen+).
+    # Enable with: --profile audio-analysis
     audio-analyzer:
+        profiles: ["audio-analysis"]
         build:
             context: .
             dockerfile: services/audio-analyzer/Dockerfile
@@ -429,7 +432,9 @@ services:
             start_period: 60s
 
     # CLAP Audio Analyzer - Generates embeddings for similarity search
+    # Requires AVX2 CPU support. Enable with: --profile audio-analysis
     audio-analyzer-clap:
+        profiles: ["audio-analysis"]
         build:
             context: .
             dockerfile: services/audio-analyzer-clap/Dockerfile
