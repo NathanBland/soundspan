@@ -123,6 +123,9 @@ describe("oidcAuth service", () => {
                 expectedNonce: "nonce-1",
                 pkceCodeVerifier: "verifier-1",
                 idTokenExpected: true,
+            },
+            {
+                redirect_uri: "https://music.example/api/auth/oidc/callback",
             }
         );
         expect(result).toEqual({

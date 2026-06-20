@@ -120,6 +120,9 @@ export async function exchangeOidcCallback(
             expectedNonce: checks.nonce,
             pkceCodeVerifier: checks.codeVerifier,
             idTokenExpected: true,
+        },
+        {
+            redirect_uri: config.oidc.redirectUri,
         }
     );
 

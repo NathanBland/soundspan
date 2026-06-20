@@ -104,8 +104,6 @@ services:
             - backend_cache:/app/cache
             - backend_logs:/app/logs
         ports:
-            # For backend scale-out in compose on a single host, set BACKEND_PORT=0
-            # to avoid fixed host-port conflicts.
             - "${BACKEND_PORT:-3006}:3006"
         depends_on:
             postgres:
