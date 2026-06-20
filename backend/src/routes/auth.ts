@@ -483,7 +483,7 @@ router.get("/oidc/callback", async (req, res) => {
     const checks: OidcSessionState = { ...stored };
     delete req.session.oidc;
 
-    const callbackUrl = buildAbsoluteRequestUrl(req);
+    const callbackUrl = `${config.oidc.redirectUri}${req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : ""}`;
     try {
         const result = await exchangeOidcCallback(callbackUrl, checks);
         const user = await resolveOidcUser(result.claims);
