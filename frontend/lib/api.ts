@@ -160,6 +160,61 @@ export interface ShareLinkRecord {
     accessPath: string;
 }
 
+export interface YtMusicLibraryThumbnail {
+    url?: string;
+    width?: number;
+    height?: number;
+}
+
+export interface YtMusicLibrarySong {
+    id?: string;
+    videoId?: string;
+    title?: string;
+    artist?: string;
+    artists?: Array<string | { name?: string }>;
+    album?: string | { title?: string; name?: string };
+    duration?: number | string;
+    duration_seconds?: number;
+    thumbnailUrl?: string | null;
+    thumbnails?: YtMusicLibraryThumbnail[];
+}
+
+export interface YtMusicLibraryAlbum {
+    id?: string;
+    browseId?: string;
+    albumId?: string;
+    playlistId?: string;
+    title?: string;
+    name?: string;
+    artist?: string;
+    artists?: Array<string | { name?: string }>;
+    thumbnailUrl?: string | null;
+    thumbnails?: YtMusicLibraryThumbnail[];
+    year?: string | number;
+}
+
+export interface YtMusicLibraryPlaylist {
+    id?: string;
+    playlistId?: string;
+    browseId?: string;
+    title?: string;
+    name?: string;
+    description?: string | null;
+    author?: string;
+    count?: string | number | null;
+    trackCount?: number;
+    thumbnailUrl?: string | null;
+    thumbnails?: YtMusicLibraryThumbnail[];
+}
+
+export interface YtMusicLibraryResponse {
+    source: "ytmusic";
+    songs: YtMusicLibrarySong[];
+    albums: YtMusicLibraryAlbum[];
+    playlists: YtMusicLibraryPlaylist[];
+    errors?: Partial<Record<"songs" | "albums" | "playlists", string>>;
+}
+
 // New Mood Bucket Types (simplified mood system)
 export type MoodType =
     | "happy"
@@ -3226,6 +3281,19 @@ class ApiClient {
 
     async clearYtMusicAuth(): Promise<{ success: boolean }> {
         return this.post(`/ytmusic/auth/clear`);
+    }
+
+    async getYtMusicLibrary(params: {
+        songsLimit?: number;
+        albumsLimit?: number;
+        playlistsLimit?: number;
+    } = {}): Promise<YtMusicLibraryResponse> {
+        const query = toSearchParams({
+            songsLimit: params.songsLimit,
+            albumsLimit: params.albumsLimit,
+            playlistsLimit: params.playlistsLimit,
+        }).toString();
+        return this.get(`/ytmusic/library${query ? `?${query}` : ""}`);
     }
 
     async searchYtMusic(

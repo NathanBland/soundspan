@@ -31,6 +31,8 @@ const router = Router();
 const OAUTH_CACHE_TTL_MS = process.env.NODE_ENV === "test" ? 0 : 60_000;
 const OAUTH_NEGATIVE_CACHE_TTL_MS = process.env.NODE_ENV === "test" ? 0 : 15_000;
 const DEFAULT_YTMUSIC_STREAM_QUALITY = "high";
+const DEFAULT_YTMUSIC_LIBRARY_LIMIT = 25;
+const MAX_YTMUSIC_LIBRARY_LIMIT = 100;
 const ytOauthSessionCache = new Map<
     string,
     { authenticated: boolean; expiresAt: number }
@@ -216,6 +218,50 @@ const getRequestedStreamQuality = (rawQuality: unknown): string | undefined => {
     const trimmed = rawQuality.trim();
     return trimmed.length > 0 ? trimmed : undefined;
 };
+
+function parseLibraryLimit(rawLimit: unknown): number {
+    if (typeof rawLimit !== "string") {
+        return DEFAULT_YTMUSIC_LIBRARY_LIMIT;
+    }
+    const parsed = Number.parseInt(rawLimit, 10);
+    if (!Number.isFinite(parsed)) {
+        return DEFAULT_YTMUSIC_LIBRARY_LIMIT;
+    }
+    return Math.min(MAX_YTMUSIC_LIBRARY_LIMIT, Math.max(1, parsed));
+}
+
+function getYtMusicDetailMessage(error: any, fallback: string): string {
+    return typeof error?.response?.data?.detail === "string"
+        ? error.response.data.detail
+        : fallback;
+}
+
+async function loadYtMusicLibrarySection<T>(
+    section: "songs" | "albums" | "playlists",
+    loader: () => Promise<T[]>
+): Promise<{ section: "songs" | "albums" | "playlists"; items: T[]; error?: string }> {
+    try {
+        return {
+            section,
+            items: await loader(),
+        };
+    } catch (error: any) {
+        if (error?.response?.status === 401) {
+            throw error;
+        }
+
+        const message = getYtMusicDetailMessage(
+            error,
+            `Failed to get library ${section}`
+        );
+        logger.warn(`[YTMusic Route] Library ${section} failed: ${message}`);
+        return {
+            section,
+            items: [],
+            error: message,
+        };
+    }
+}
 
 async function resolveYtMusicStreamQuality(
     userId: string,
@@ -951,6 +997,110 @@ router.get(
 );
 
 // ── Library ────────────────────────────────────────────────────────
+
+/**
+ * @openapi
+ * /api/ytmusic/library:
+ *   get:
+ *     summary: Get a preview of the user's linked YouTube Music library
+ *     tags: [YouTube Music]
+ *     security:
+ *       - sessionAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: songsLimit
+ *         schema:
+ *           type: integer
+ *           default: 25
+ *         description: Maximum number of songs to return
+ *       - in: query
+ *         name: albumsLimit
+ *         schema:
+ *           type: integer
+ *           default: 25
+ *         description: Maximum number of albums to return
+ *       - in: query
+ *         name: playlistsLimit
+ *         schema:
+ *           type: integer
+ *           default: 25
+ *         description: Maximum number of playlists to return
+ *     responses:
+ *       200:
+ *         description: Best-effort linked-library preview
+ *       401:
+ *         description: Not authenticated or YouTube Music auth expired
+ *       403:
+ *         description: YouTube Music integration is not enabled
+ */
+router.get(
+    "/library",
+    requireAuth,
+    requireYtMusicEnabled,
+    async (req: Request, res: Response) => {
+        try {
+            const userId = req.user!.id;
+            if (!(await requireUserOAuth(userId, res))) return;
+
+            const songsLimit = parseLibraryLimit(req.query.songsLimit);
+            const albumsLimit = parseLibraryLimit(req.query.albumsLimit);
+            const playlistsLimit = parseLibraryLimit(req.query.playlistsLimit);
+
+            const sections = await Promise.all([
+                loadYtMusicLibrarySection("songs", () =>
+                    ytMusicService.getLibrarySongs(userId, songsLimit)
+                ),
+                loadYtMusicLibrarySection("albums", () =>
+                    ytMusicService.getLibraryAlbums(userId, albumsLimit)
+                ),
+                loadYtMusicLibrarySection("playlists", () =>
+                    ytMusicService.getLibraryPlaylists(
+                        userId,
+                        playlistsLimit,
+                        false
+                    )
+                ),
+            ]);
+
+            const result: {
+                source: "ytmusic";
+                songs: any[];
+                albums: any[];
+                playlists: any[];
+                errors?: Partial<Record<"songs" | "albums" | "playlists", string>>;
+            } = {
+                source: "ytmusic",
+                songs: [],
+                albums: [],
+                playlists: [],
+            };
+
+            const errors: Partial<
+                Record<"songs" | "albums" | "playlists", string>
+            > = {};
+            for (const section of sections) {
+                result[section.section] = section.items;
+                if (section.error) {
+                    errors[section.section] = section.error;
+                }
+            }
+            if (Object.keys(errors).length > 0) {
+                result.errors = errors;
+            }
+
+            res.json(result);
+        } catch (err: any) {
+            if (handleYtMusicAuthError(res, err)) return;
+            logger.error("[YTMusic Route] Library failed:", err);
+            res.status(500).json({
+                error: getYtMusicDetailMessage(
+                    err,
+                    "Failed to get YouTube Music library"
+                ),
+            });
+        }
+    }
+);
 
 /**
  * @openapi

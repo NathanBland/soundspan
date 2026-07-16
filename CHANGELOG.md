@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OIDC/SSO web login with external-identity account linking, verified-email auto-linking, optional auto-provisioning, and configurable admin group mapping.
 - OpenSubsonic app passwords for `/rest` clients, including one-time secret display, revocation, and last-used tracking.
 - Auth configuration endpoint and login UI support for SSO visibility and optionally disabled local web login.
+- Linked YouTube Music accounts now surface best-effort library previews on Explore, including account playlists, albums, and playable songs.
 
 ### Changed
 

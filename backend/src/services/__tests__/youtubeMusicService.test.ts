@@ -263,13 +263,22 @@ describe("youtubeMusic service", () => {
 
         mockClient.get
             .mockResolvedValueOnce({ data: { songs: [{ id: "s1" }] } })
-            .mockResolvedValueOnce({ data: { albums: [{ id: "a1" }] } });
+            .mockResolvedValueOnce({ data: { albums: [{ id: "a1" }] } })
+            .mockResolvedValueOnce({
+                data: { playlists: [{ playlistId: "pl1" }] },
+            });
         await expect(ytMusicService.getLibrarySongs("u1", 30)).resolves.toEqual([
             { id: "s1" },
         ]);
         await expect(ytMusicService.getLibraryAlbums("u1", 30)).resolves.toEqual([
             { id: "a1" },
         ]);
+        await expect(
+            ytMusicService.getLibraryPlaylists("u1", 30, false)
+        ).resolves.toEqual([{ playlistId: "pl1" }]);
+        expect(mockClient.get).toHaveBeenLastCalledWith("/library/playlists", {
+            params: { user_id: "u1", limit: 30, mixes_only: false },
+        });
     });
 
     it("runs batch search and album matching with second-pass fallback", async () => {

@@ -47,6 +47,7 @@ const ytMusicService = {
     getStreamProxy: jest.fn(),
     getLibrarySongs: jest.fn(),
     getLibraryAlbums: jest.fn(),
+    getLibraryPlaylists: jest.fn(),
     findMatchForTrack: jest.fn(),
     findMatchesForAlbum: jest.fn(),
 };
@@ -164,6 +165,7 @@ describe("youtube music route runtime behavior", () => {
     const songHandler = getLastHandler("/song/:videoId", "get");
     const streamInfoHandler = getLastHandler("/stream-info/:videoId", "get");
     const streamHandler = getLastHandler("/stream/:videoId", "get");
+    const libraryHandler = getLastHandler("/library", "get");
     const librarySongsHandler = getLastHandler("/library/songs", "get");
     const libraryAlbumsHandler = getLastHandler("/library/albums", "get");
     const matchHandler = getLastHandler("/match", "post");
@@ -221,6 +223,9 @@ describe("youtube music route runtime behavior", () => {
         });
         ytMusicService.getLibrarySongs.mockResolvedValue([{ id: "song-1" }]);
         ytMusicService.getLibraryAlbums.mockResolvedValue([{ id: "album-1" }]);
+        ytMusicService.getLibraryPlaylists.mockResolvedValue([
+            { playlistId: "playlist-1" },
+        ]);
         ytMusicService.findMatchForTrack.mockResolvedValue({
             videoId: "match-1",
         });
@@ -890,6 +895,48 @@ describe("youtube music route runtime behavior", () => {
         );
         expect(songsErrorRes.statusCode).toBe(500);
         expect(songsErrorRes.body).toEqual({ error: "library songs failed" });
+    });
+
+    it("returns linked library content and preserves partial section failures", async () => {
+        const reqBase = { user: { id: "user-1" } } as any;
+
+        const successRes = createRes();
+        await libraryHandler(
+            { ...reqBase, query: { songsLimit: "12", albumsLimit: "8", playlistsLimit: "5" } } as any,
+            successRes
+        );
+
+        expect(successRes.statusCode).toBe(200);
+        expect(successRes.body).toEqual({
+            source: "ytmusic",
+            songs: [{ id: "song-1" }],
+            albums: [{ id: "album-1" }],
+            playlists: [{ playlistId: "playlist-1" }],
+        });
+        expect(ytMusicService.getLibrarySongs).toHaveBeenCalledWith("user-1", 12);
+        expect(ytMusicService.getLibraryAlbums).toHaveBeenCalledWith("user-1", 8);
+        expect(ytMusicService.getLibraryPlaylists).toHaveBeenCalledWith(
+            "user-1",
+            5,
+            false
+        );
+
+        ytMusicService.getLibraryPlaylists.mockRejectedValueOnce({
+            response: { status: 500, data: { detail: "playlist library failed" } },
+        });
+        const partialRes = createRes();
+        await libraryHandler({ ...reqBase, query: {} } as any, partialRes);
+
+        expect(partialRes.statusCode).toBe(200);
+        expect(partialRes.body).toEqual({
+            source: "ytmusic",
+            songs: [{ id: "song-1" }],
+            albums: [{ id: "album-1" }],
+            playlists: [],
+            errors: {
+                playlists: "playlist library failed",
+            },
+        });
     });
 
     it("covers match and match-batch validation, success, and failure paths", async () => {

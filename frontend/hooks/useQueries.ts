@@ -17,7 +17,7 @@
  */
 
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, type YtMusicLibraryResponse } from "@/lib/api";
 import type { AddToPlaylistRef } from "@/lib/trackRef";
 import type { Artist, Album, Track } from "@/features/library/types";
 import { isGenreCategory, isHiddenGenreItem } from "@/features/explore/genreClassification";
@@ -80,6 +80,7 @@ export const queryKeys = {
     discoverSimilar: (artist: string, mbid: string, limit: number) =>
         ["search", "discover", "similar", artist, mbid, limit] as const,
     ytMusicStatus: () => ["ytmusic", "status"] as const,
+    ytMusicLibrary: () => ["ytmusic", "library"] as const,
     ytMusicSearch: (query: string, filter?: string) =>
         ["search", "ytmusic", query, filter ?? "all"] as const,
 
@@ -740,6 +741,33 @@ export function useYtMusicSearchQuery(
         queryKey: queryKeys.ytMusicSearch(query, filter),
         queryFn: () => api.searchYtMusic(query, filter),
         enabled: canSearch && query.trim().length >= 2,
+        staleTime: 5 * 60 * 1000,
+        retry: 1,
+    });
+}
+
+/**
+ * Hook to fetch linked-account YouTube Music library previews.
+ */
+export function useYtMusicLibraryQuery(options?: { enabled?: boolean }) {
+    const status = useYtMusicStatusQuery({
+        enabled: options?.enabled ?? true,
+    });
+    const canFetch =
+        Boolean(options?.enabled ?? true) &&
+        Boolean(status.data?.enabled) &&
+        Boolean(status.data?.available) &&
+        Boolean(status.data?.authenticated);
+
+    return useQuery<YtMusicLibraryResponse>({
+        queryKey: queryKeys.ytMusicLibrary(),
+        queryFn: () =>
+            api.getYtMusicLibrary({
+                songsLimit: 25,
+                albumsLimit: 12,
+                playlistsLimit: 12,
+            }),
+        enabled: canFetch,
         staleTime: 5 * 60 * 1000,
         retry: 1,
     });

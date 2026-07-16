@@ -20,6 +20,7 @@ const queryCalls = {
     recommendations: [] as unknown[][],
     discoverWeekly: [] as unknown[][],
     mixes: [] as unknown[][],
+    ytMusicLibrary: [] as unknown[][],
 };
 
 mock.module("@/lib/features-context", {
@@ -97,6 +98,17 @@ mock.module("@/hooks/useQueries", {
             isLoading: false,
         }),
         useYtMusicMixesQuery: () => ({ data: [] }),
+        useYtMusicLibraryQuery: (options?: { enabled?: boolean }) => {
+            queryCalls.ytMusicLibrary.push([options?.enabled]);
+            return {
+                data: {
+                    source: "ytmusic",
+                    songs: [{ videoId: "yt-song-1" }],
+                    albums: [],
+                    playlists: [],
+                },
+            };
+        },
         useTidalHomeShelvesQuery: () => ({ data: [] }),
         useTidalExploreShelvesQuery: () => ({ data: [] }),
         useTidalGenresQuery: () => ({ data: [] }),
@@ -135,6 +147,7 @@ beforeEach(() => {
     queryCalls.recommendations.length = 0;
     queryCalls.discoverWeekly.length = 0;
     queryCalls.mixes.length = 0;
+    queryCalls.ytMusicLibrary.length = 0;
 });
 
 test("explore data enables gated queries and passes data through when flags are on", async () => {
@@ -143,9 +156,11 @@ test("explore data enables gated queries and passes data through when flags are 
     assert.deepEqual(queryCalls.recommendations, [[10, true]]);
     assert.deepEqual(queryCalls.discoverWeekly, [[true]]);
     assert.deepEqual(queryCalls.mixes, [[true]]);
+    assert.deepEqual(queryCalls.ytMusicLibrary, [[true]]);
     assert.equal(result.recommended.length, 1);
     assert.equal(result.mixes.length, 1);
     assert.notEqual(result.discoverWeekly, null);
+    assert.equal(result.ytMusicLibrary?.songs.length, 1);
 });
 
 test("explore data disables discovery queries and hides their data when discovery is off", async () => {

@@ -27,6 +27,10 @@ mock.module("@/features/explore/components/FeaturedShelvesSection", {
     namedExports: { FeaturedShelvesSection: marker("featured-shelves-section") },
 });
 
+mock.module("@/features/explore/components/YtMusicLibrarySection", {
+    namedExports: { YtMusicLibrarySection: marker("ytmusic-library-section") },
+});
+
 mock.module("@/features/explore/components/YtMusicMixesSection", {
     namedExports: { YtMusicMixesSection: marker("ytmusic-mixes-section") },
 });
@@ -90,6 +94,7 @@ mock.module("@/components/ui/TidalBadge", {
 const baseProps = {
     showYtMusicExplore: true,
     showTidalExplore: true,
+    ytMusicLibrary: null,
     ytMusicMixes: [],
     moodCategories: [],
     genreCategories: [],
@@ -116,6 +121,7 @@ test("ProviderTabSection: both providers enabled renders tab bar with both label
     // Default tab is YouTube — its content should render
     assert.match(html, /moods-genres-section/);
     assert.match(html, /featured-shelves-section/);
+    assert.match(html, /ytmusic-library-section/);
 });
 
 test("ProviderTabSection: only YouTube enabled renders content without tab bar", async () => {
@@ -130,6 +136,7 @@ test("ProviderTabSection: only YouTube enabled renders content without tab bar",
     // YouTube content present
     assert.match(html, /moods-genres-section/);
     assert.match(html, /featured-shelves-section/);
+    assert.match(html, /ytmusic-library-section/);
     // No tab bar labels
     assert.doesNotMatch(html, /YouTube Music/);
     assert.doesNotMatch(html, /TIDAL/);
@@ -156,6 +163,7 @@ test("ProviderTabSection: only TIDAL enabled renders content without tab bar", a
     // No YouTube content
     assert.doesNotMatch(html, /moods-genres-section/);
     assert.doesNotMatch(html, /featured-shelves-section/);
+    assert.doesNotMatch(html, /ytmusic-library-section/);
 });
 
 test("ProviderTabSection: neither provider enabled renders empty", async () => {
