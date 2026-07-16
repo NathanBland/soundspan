@@ -1,6 +1,12 @@
-import { useSearchQuery, useDiscoverSearchQuery, useDiscoverSimilarArtistsQuery } from "@/hooks/useQueries";
+import {
+    useSearchQuery,
+    useDiscoverSearchQuery,
+    useDiscoverSimilarArtistsQuery,
+    useYtMusicSearchQuery,
+} from "@/hooks/useQueries";
 import type { SearchResult, DiscoverResult, AliasInfo } from "../types";
 import { useMemo } from "react";
+import type { CanonicalMediaSearchResult } from "@soundspan/media-metadata-contract";
 
 interface UseSearchDataProps {
     query: string;
@@ -15,9 +21,11 @@ interface UseSearchDataReturn {
     libraryResults: SearchResult | null;
     discoverResults: DiscoverResult[];
     similarArtists: DiscoverResult[];
+    ytMusicResults: CanonicalMediaSearchResult[];
     aliasInfo: AliasInfo | null;
     isLibrarySearching: boolean;
     isDiscoverSearching: boolean;
+    isYtMusicSearching: boolean;
     hasSearched: boolean;
 }
 
@@ -32,6 +40,7 @@ export function useSearchData({
     discoverLimit = 20,
     similarArtistsLimit = 6,
 }: UseSearchDataProps): UseSearchDataReturn {
+    const ytMusicEnabledForSearch = discoverType !== "podcasts";
     const {
         data: libraryResults,
         isLoading: isLibrarySearching,
@@ -43,6 +52,14 @@ export function useSearchData({
         isLoading: isDiscoverSearching,
         isFetching: isDiscoverFetching
     } = useDiscoverSearchQuery(query, discoverType, discoverLimit);
+
+    const {
+        data: ytMusicData,
+        isLoading: isYtMusicLoading,
+        isFetching: isYtMusicFetching,
+    } = useYtMusicSearchQuery(query, "songs", {
+        enabled: ytMusicEnabledForSearch,
+    });
 
     const discoverResults = useMemo(() => {
         return discoverData?.results || [];
@@ -69,15 +86,25 @@ export function useSearchData({
         return similarData?.similarArtists || [];
     }, [similarData]);
 
+    const ytMusicResults = useMemo(() => {
+        if (!ytMusicEnabledForSearch) {
+            return [];
+        }
+        return ytMusicData?.results || [];
+    }, [ytMusicData, ytMusicEnabledForSearch]);
+
     const hasSearched = query.trim().length >= 2;
 
     return {
         libraryResults: libraryResults || null,
         discoverResults,
         similarArtists,
+        ytMusicResults,
         aliasInfo,
         isLibrarySearching: isLibrarySearching || isLibraryFetching,
         isDiscoverSearching: isDiscoverSearching || isDiscoverFetching,
+        isYtMusicSearching:
+            ytMusicEnabledForSearch && (isYtMusicLoading || isYtMusicFetching),
         hasSearched,
     };
 }

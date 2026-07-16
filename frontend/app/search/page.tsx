@@ -21,6 +21,7 @@ import { LibraryTracksList } from "@/features/search/components/LibraryTracksLis
 import { SimilarArtistsGrid } from "@/features/search/components/SimilarArtistsGrid";
 import { AliasResolutionBanner } from "@/features/search/components/AliasResolutionBanner";
 import { SoulseekSongsList } from "@/features/search/components/SoulseekSongsList";
+import { YtMusicSearchResultsList } from "@/features/search/components/YtMusicSearchResultsList";
 import { TVSearchInput } from "@/features/search/components/TVSearchInput";
 import { useAuth } from "@/lib/auth-context";
 import type { FilterTab } from "@/features/search/types";
@@ -62,9 +63,11 @@ export default function SearchPage() {
         libraryResults,
         discoverResults,
         similarArtists,
+        ytMusicResults,
         aliasInfo,
         isLibrarySearching,
         isDiscoverSearching,
+        isYtMusicSearching,
         hasSearched,
     } = useSearchData({
         query,
@@ -114,11 +117,13 @@ export default function SearchPage() {
     const isLoading =
         isLibrarySearching ||
         isDiscoverSearching ||
+        isYtMusicSearching ||
         isSoulseekSearching ||
         isSoulseekPolling;
     const showLibrary = filterTab === "all" || filterTab === "library";
     const showDiscover = filterTab === "all" || filterTab === "discover";
     const showSoulseek = filterTab === "all" || filterTab === "soulseek";
+    const showYtMusic = !isPodcastTab && showDiscover;
     const showPodcastResults = filterTab === "all" || isPodcastTab;
     const discoverPodcastResults = discoverResults.filter(
         (result) => result.type === "podcast"
@@ -206,9 +211,11 @@ export default function SearchPage() {
                 {hasSearched &&
                     (isLibrarySearching ||
                         isDiscoverSearching ||
+                        isYtMusicSearching ||
                         isSoulseekSearching) &&
                     (!libraryResults || !libraryResults.artists?.length) &&
-                    discoverResults.length === 0 && (
+                    discoverResults.length === 0 &&
+                    ytMusicResults.length === 0 && (
                         <div className="flex flex-col items-center justify-center py-16 relative z-10">
                             <div className="relative w-16 h-16 mb-4">
                                 <svg
@@ -425,6 +432,17 @@ export default function SearchPage() {
                     </>
                 )}
 
+                {/* YouTube Music Songs */}
+                {hasSearched &&
+                    showYtMusic &&
+                    (sectionView === null || isTracksView) &&
+                    ytMusicResults.length > 0 && (
+                        <YtMusicSearchResultsList
+                            results={ytMusicResults}
+                            limit={isTracksView ? null : 10}
+                        />
+                    )}
+
                 {/* Library Albums */}
                 {hasSearched &&
                     showLibrary &&
@@ -515,6 +533,7 @@ export default function SearchPage() {
                         ? !hasPodcastResults
                         : !topArtist &&
                           discoverPodcastResults.length === 0 &&
+                          ytMusicResults.length === 0 &&
                           soulseekResults.length === 0 &&
                           (!libraryResults ||
                               (!libraryResults.artists?.length &&

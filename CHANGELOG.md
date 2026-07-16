@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/rest` authentication only scans app-password hashes for credentials carrying the generated `ssp_ap_` secret prefix, keeping legacy token and local-password requests free of redundant bcrypt work.
 - `docker-compose.portainer.yml` now forwards the release feature flags to backend containers and gives the optional worker role the same TIDAL/YouTube Music sidecar URLs as the API role.
 
+### Fixed
+
+- Global search now queries YouTube Music when the integration is enabled and renders playable YouTube Music song results instead of only supporting YouTube URL paste/browse flows.
+
 ## [1.8.0] - 2026-07-10
 
 ### Added

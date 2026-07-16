@@ -21,6 +21,7 @@ import { api } from "@/lib/api";
 import type { AddToPlaylistRef } from "@/lib/trackRef";
 import type { Artist, Album, Track } from "@/features/library/types";
 import { isGenreCategory, isHiddenGenreItem } from "@/features/explore/genreClassification";
+import type { CanonicalMediaSearchResult } from "@soundspan/media-metadata-contract";
 
 export const queryKeys = {
     // Artist queries
@@ -78,6 +79,9 @@ export const queryKeys = {
         ["search", "discover", query, type, limit] as const,
     discoverSimilar: (artist: string, mbid: string, limit: number) =>
         ["search", "discover", "similar", artist, mbid, limit] as const,
+    ytMusicStatus: () => ["ytmusic", "status"] as const,
+    ytMusicSearch: (query: string, filter?: string) =>
+        ["search", "ytmusic", query, filter ?? "all"] as const,
 
     // Playlists
     playlists: () => ["playlists"] as const,
@@ -695,6 +699,49 @@ export function useDiscoverSimilarArtistsQuery(
             api.discoverSimilarArtists(artistName, mbid, limit, signal),
         enabled: artistName.length > 0,
         staleTime: 30 * 60 * 1000, // 30 minutes -- similar artists rarely change
+    });
+}
+
+/**
+ * Hook to fetch YouTube Music availability for public catalog search.
+ */
+export function useYtMusicStatusQuery(options?: { enabled?: boolean }) {
+    return useQuery({
+        queryKey: queryKeys.ytMusicStatus(),
+        queryFn: () => api.getYtMusicStatus(),
+        enabled: options?.enabled ?? true,
+        staleTime: 60 * 1000,
+        retry: 1,
+    });
+}
+
+/**
+ * Hook to search YouTube Music catalog results for the global search page.
+ */
+export function useYtMusicSearchQuery(
+    query: string,
+    filter: "songs" | "albums" | "artists" | "videos" = "songs",
+    options?: { enabled?: boolean },
+) {
+    const status = useYtMusicStatusQuery({
+        enabled: options?.enabled ?? true,
+    });
+    const canSearch =
+        Boolean(options?.enabled ?? true) &&
+        Boolean(status.data?.enabled) &&
+        Boolean(status.data?.available);
+
+    return useQuery<{
+        query: string;
+        filter: "songs" | "albums" | "artists" | "videos" | null;
+        total: number;
+        results: CanonicalMediaSearchResult[];
+    }>({
+        queryKey: queryKeys.ytMusicSearch(query, filter),
+        queryFn: () => api.searchYtMusic(query, filter),
+        enabled: canSearch && query.trim().length >= 2,
+        staleTime: 5 * 60 * 1000,
+        retry: 1,
     });
 }
 
