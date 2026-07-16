@@ -58,6 +58,12 @@ services:
 
             # Internal API secret for service-to-service auth
             INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-soundspan-internal-secret-change-me}
+
+            # Coarse feature flags for ML/recommendation subsystems (default: true)
+            AUDIO_ANALYSIS_ENABLED: ${AUDIO_ANALYSIS_ENABLED:-true}
+            DISCOVERY_ENABLED: ${DISCOVERY_ENABLED:-true}
+            AUTO_PLAYLISTS_ENABLED: ${AUTO_PLAYLISTS_ENABLED:-true}
+
             # Keep these enabled for cross-replica Listen Together behavior
             LISTEN_TOGETHER_REDIS_ADAPTER_ENABLED: ${LISTEN_TOGETHER_REDIS_ADAPTER_ENABLED:-true}
             LISTEN_TOGETHER_STATE_SYNC_ENABLED: ${LISTEN_TOGETHER_STATE_SYNC_ENABLED:-true}
@@ -183,6 +189,13 @@ services:
             LOG_LEVEL: ${LOG_LEVEL:-warn}
             MUSIC_PATH: /music
             INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-soundspan-internal-secret-change-me}
+            # Coarse feature flags for ML/recommendation subsystems (default: true)
+            AUDIO_ANALYSIS_ENABLED: ${AUDIO_ANALYSIS_ENABLED:-true}
+            DISCOVERY_ENABLED: ${DISCOVERY_ENABLED:-true}
+            AUTO_PLAYLISTS_ENABLED: ${AUTO_PLAYLISTS_ENABLED:-true}
+            # Worker-side download/import jobs also need sidecar DNS names.
+            TIDAL_SIDECAR_URL: ${TIDAL_SIDECAR_URL:-http://tidal-downloader:8585}
+            YTMUSIC_STREAMER_URL: ${YTMUSIC_STREAMER_URL:-http://ytmusic-streamer:8586}
             BACKEND_PROCESS_ROLE: worker
             WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-3010}
             SCHEDULER_CLAIM_SKIP_WARN_THRESHOLD: ${SCHEDULER_CLAIM_SKIP_WARN_THRESHOLD:-3}

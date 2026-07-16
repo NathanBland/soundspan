@@ -140,12 +140,17 @@ function createRes() {
     const res: any = {
         statusCode: 200,
         body: undefined as unknown,
+        clearedCookies: [] as string[],
         status: jest.fn(function (code: number) {
             res.statusCode = code;
             return res;
         }),
         json: jest.fn(function (payload: unknown) {
             res.body = payload;
+            return res;
+        }),
+        clearCookie: jest.fn(function (name: string) {
+            res.clearedCookies.push(name);
             return res;
         }),
     };
@@ -422,7 +427,14 @@ describe("auth routes runtime", () => {
 
     it("handles logout and refresh-token validation paths", async () => {
         const logoutRes = createRes();
-        await logout({} as any, logoutRes);
+        const logoutReq = {
+            session: {
+                destroy: jest.fn((cb: (err: Error | null) => void) => cb(null)),
+            },
+        } as any;
+        await logout(logoutReq, logoutRes);
+        expect(logoutReq.session.destroy).toHaveBeenCalled();
+        expect(logoutRes.clearedCookies).toContain("connect.sid");
         expect(logoutRes.statusCode).toBe(200);
         expect(logoutRes.body).toEqual({ message: "Logged out" });
 

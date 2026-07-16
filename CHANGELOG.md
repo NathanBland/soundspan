@@ -5,6 +5,21 @@ All notable changes to soundspan are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- OIDC/SSO web login with external-identity account linking, verified-email auto-linking, optional auto-provisioning, and configurable admin group mapping.
+- OpenSubsonic app passwords for `/rest` clients, including one-time secret display, revocation, and last-used tracking.
+- Auth configuration endpoint and login UI support for SSO visibility and optionally disabled local web login.
+
+### Changed
+
+- User password hashes are now nullable so OIDC-created users do not require reusable local account passwords.
+- `/rest` authentication now prefers active app passwords before local account passwords while preserving legacy encrypted Subsonic token auth.
+- `/rest` authentication only scans app-password hashes for credentials carrying the generated `ssp_ap_` secret prefix, keeping legacy token and local-password requests free of redundant bcrypt work.
+- `docker-compose.portainer.yml` now forwards the release feature flags to backend containers and gives the optional worker role the same TIDAL/YouTube Music sidecar URLs as the API role.
+
 ## [1.8.0] - 2026-07-10
 
 ### Added
@@ -64,9 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Play next" and "Add to queue" actions for podcast episodes via a new episode overflow menu on the podcast page (blocked inside Listen Together sessions, which remain music-only).
 - Player queue panels (overlay player and `/queue` page) render episode entries with podcast cover art and show titles, and can play or remove them like tracks.
 - Persisted playback state (server and local) round-trips mixed queues; queues saved by older clients are migrated as music tracks automatically.
-- OIDC/SSO web login with external-identity account linking, verified-email auto-linking, optional auto-provisioning, and configurable admin group mapping.
-- OpenSubsonic app passwords for `/rest` clients, including one-time secret display, revocation, and last-used tracking.
-- Auth configuration endpoint and login UI support for SSO visibility and optionally disabled local web login.
 
 ### Fixed
 
@@ -101,9 +113,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Social presence and notification/download polling now pause while the app tab is hidden and refetch immediately when it becomes visible again, cutting background network chatter on mobile.
 - Docker Compose (split-stack `backend`/`backend-worker` and AIO) now forwards the `AUDIO_ANALYSIS_ENABLED`, `DISCOVERY_ENABLED`, and `AUTO_PLAYLISTS_ENABLED` feature flags from `.env` (default `true`), so setting them actually reaches the containers — previously only Helm deployments could use the flags advertised in `.env.example`.
 - The custom server's streaming `/api` proxy honors the configurable time-to-first-byte timeouts again: `PROXY_REQUEST_TIMEOUT_MS` (default 20s) and `PROXY_IMPORT_PREVIEW_TIMEOUT_MS` (default 90s), answering `504` with `code: UPSTREAM_TIMEOUT` like the previous route handler — the proxy migration had silently replaced them with a fixed 120s inactivity timeout and a `503`.
-- User password hashes are now nullable so OIDC-created users do not require reusable local account passwords.
-- `/rest` authentication now prefers active app passwords before local account passwords while preserving legacy encrypted Subsonic token auth.
-- `/rest` authentication only scans app-password hashes for credentials carrying the generated `ssp_ap_` secret prefix, keeping legacy token and local-password requests free of redundant bcrypt work.
 
 ### Security
 

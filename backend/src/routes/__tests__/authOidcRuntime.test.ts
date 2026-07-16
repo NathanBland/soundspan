@@ -191,12 +191,17 @@ describe("OIDC auth routes", () => {
     it("builds an authorization URL and stores state, nonce, PKCE, and return path in session", async () => {
         const req = {
             query: { returnTo: "/settings" },
-            session: {},
+            session: {
+                regenerate: jest.fn((cb: (err: Error | null) => void) => cb(null)),
+                save: jest.fn((cb: (err: Error | null) => void) => cb(null)),
+            },
         } as any;
         const res = createRes();
 
         await oidcLogin(req, res);
 
+        expect(req.session.regenerate).toHaveBeenCalled();
+        expect(req.session.save).toHaveBeenCalled();
         expect(mockBuildOidcAuthorizationUrl).toHaveBeenCalledWith();
         expect(req.session.oidc).toEqual({
             state: "state-1",
@@ -209,6 +214,29 @@ describe("OIDC auth routes", () => {
         );
     });
 
+    it("clears stale session state when starting a new OIDC login", async () => {
+        const req = {
+            query: {},
+            session: {
+                userId: "stale-user-id",
+                regenerate: jest.fn((cb: (err: Error | null) => void) => {
+                    delete (req.session as any).userId;
+                    cb(null);
+                }),
+                save: jest.fn((cb: (err: Error | null) => void) => cb(null)),
+            },
+        } as any;
+        const res = createRes();
+
+        await oidcLogin(req, res);
+
+        expect(req.session.regenerate).toHaveBeenCalled();
+        expect(req.session.userId).toBeUndefined();
+        expect(res.redirect).toHaveBeenCalledWith(
+            "https://idp.example/auth?state=state-1"
+        );
+    });
+
     it("rejects callback when stored state is missing or mismatched", async () => {
         const req = {
             originalUrl: "/api/auth/oidc/callback?state=bad&code=abc",
@@ -216,6 +244,8 @@ describe("OIDC auth routes", () => {
             get: jest.fn(() => "music.example"),
             query: { state: "bad", code: "abc" },
             session: {
+                regenerate: jest.fn((cb: (err: Error | null) => void) => cb(null)),
+                save: jest.fn((cb: (err: Error | null) => void) => cb(null)),
                 oidc: {
                     state: "state-1",
                     nonce: "nonce-1",
@@ -411,6 +441,8 @@ function buildCallbackReq() {
         get: jest.fn(() => "music.example"),
         query: { state: "state-1", code: "abc" },
         session: {
+            regenerate: jest.fn((cb: (err: Error | null) => void) => cb(null)),
+            save: jest.fn((cb: (err: Error | null) => void) => cb(null)),
             oidc: {
                 state: "state-1",
                 nonce: "nonce-1",

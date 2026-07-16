@@ -141,6 +141,18 @@ function redirectLoginError(res: Response, message: string) {
     return res.redirect(`/login?error=${encodeURIComponent(message)}`);
 }
 
+function regenerateSession(req: Request): Promise<void> {
+    return new Promise((resolve, reject) =>
+        req.session.regenerate((err) => (err ? reject(err) : resolve()))
+    );
+}
+
+function saveSession(req: Request): Promise<void> {
+    return new Promise((resolve, reject) =>
+        req.session.save((err) => (err ? reject(err) : resolve()))
+    );
+}
+
 function getClaimString(
     claims: Record<string, unknown>,
     claimName: string
@@ -429,12 +441,15 @@ router.get("/oidc/login", async (req, res) => {
 
     try {
         const authorization = await buildOidcAuthorizationUrl();
-        req.session.oidc = {
+        const oidcState: OidcSessionState = {
             state: authorization.state,
             nonce: authorization.nonce,
             codeVerifier: authorization.codeVerifier,
             returnTo: normalizeReturnTo(req.query.returnTo),
         };
+        await regenerateSession(req);
+        req.session.oidc = oidcState;
+        await saveSession(req);
         return res.redirect(authorization.redirectUrl);
     } catch (error) {
         logger.error("OIDC login start error:", error);
@@ -491,7 +506,9 @@ router.get("/oidc/callback", async (req, res) => {
             return redirectLoginError(res, "OIDC account is not linked");
         }
 
+        await regenerateSession(req);
         req.session.userId = user.id;
+        await saveSession(req);
         return redirectWithTokens(res, checks.returnTo, user);
     } catch (error) {
         const cause =
@@ -684,11 +701,14 @@ router.post("/login", async (req, res) => {
  *       200:
  *         description: Logged out successfully
  */
-// POST /auth/logout - JWT is stateless, logout is handled client-side
 router.post("/logout", (req, res) => {
-    // With JWT, logout is handled by client removing the token
-    // No server-side session to destroy
-    res.json({ message: "Logged out" });
+    req.session.destroy((err) => {
+        if (err) {
+            logger.error("Session destroy error on logout:", err);
+        }
+        res.clearCookie("connect.sid");
+        res.json({ message: "Logged out" });
+    });
 });
 
 /**

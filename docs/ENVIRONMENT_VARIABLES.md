@@ -39,13 +39,13 @@ Experimental feature note:
 | Container / Service | File | Purpose |
 | --- | --- | --- |
 | `soundspan` | `docker-compose.aio.yml` | All-in-one image (frontend + backend + postgres + redis internal) |
-| `backend` | `docker-compose.yml` | API service (or combined role) |
-| `backend-worker` | `docker-compose.yml` | Background workers/schedulers |
+| `backend` | `docker-compose.yml`, `docker-compose.portainer.yml` | API service (or combined role) |
+| `backend-worker` | `docker-compose.yml`, `docker-compose.portainer.yml` | Background workers/schedulers |
 | `frontend` | `docker-compose.yml` | Web UI (Next.js) |
 | `postgres` | `docker-compose.yml` | PostgreSQL |
 | `redis` | `docker-compose.yml` | Redis |
-| `tidal-downloader` | `docker-compose.yml` | TIDAL sidecar |
-| `ytmusic-streamer` | `docker-compose.yml` | YouTube Music sidecar |
+| `tidal-downloader` | `docker-compose.yml`, `docker-compose.portainer.yml` | TIDAL sidecar |
+| `ytmusic-streamer` | `docker-compose.yml`, `docker-compose.portainer.yml` | YouTube Music sidecar |
 | `audio-analyzer` | `docker-compose.yml` | MusicCNN/Essentia analyzer |
 | `audio-analyzer-clap` | `docker-compose.yml` | CLAP embedding analyzer |
 | `lidarr` | `docker-compose.services.yml` | Optional external Lidarr |
@@ -154,8 +154,8 @@ Experimental feature note:
 | `AUDIOBOOKSHELF_URL` | `backend`, `backend-worker` | Optional | unset | Audiobookshelf service URL (env fallback path). |
 | `AUDIOBOOKSHELF_API_KEY` | `backend`, `backend-worker` | Optional (required if using API-key auth fallback) | unset | Audiobookshelf API key for env-based fallback configuration. |
 | `AUDIOBOOKSHELF_TOKEN` | `backend`, `backend-worker` | Optional (required if using token auth fallback) | unset | Audiobookshelf token for env-based fallback configuration. |
-| `TIDAL_SIDECAR_URL` | `backend` | Optional | `http://tidal-downloader:8585` | URL for TIDAL sidecar service. |
-| `YTMUSIC_STREAMER_URL` | `backend` | Optional | `http://ytmusic-streamer:8586` | URL for YouTube Music sidecar service. |
+| `TIDAL_SIDECAR_URL` | `backend`, `backend-worker` | Optional | `http://tidal-downloader:8585` | URL for TIDAL sidecar service. |
+| `YTMUSIC_STREAMER_URL` | `backend`, `backend-worker` | Optional | `http://ytmusic-streamer:8586` | URL for YouTube Music sidecar service. |
 
 ## Sidecar Variables
 
